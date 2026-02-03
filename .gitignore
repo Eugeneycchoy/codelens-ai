@@ -1,5 +1,6 @@
 node_modules/
 dist/*
+!dist/extension.js
 !dist/extension.js.map
 *.vsix
 .DS_Store

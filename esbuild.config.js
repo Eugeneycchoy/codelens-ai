@@ -9,7 +9,7 @@ const buildOptions = {
   format: "cjs",
   platform: "node",
   external: ["vscode"],
-  sourcemap: "external",
+  sourcemap: "linked",
   minify: false,
   ...(isWatch && {
     watch: {
