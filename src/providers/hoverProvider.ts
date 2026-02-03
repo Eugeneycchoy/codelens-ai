@@ -71,6 +71,7 @@ export class CodeLensHoverProvider implements vscode.HoverProvider {
     context: string,
   ): vscode.MarkdownString {
     const md = new vscode.MarkdownString(undefined, true);
+    md.isTrusted = true;
     md.appendMarkdown("### 🧠 CodeLens AI\n\n");
     md.appendMarkdown(explanation);
     md.appendMarkdown("\n\n---\n\n");
