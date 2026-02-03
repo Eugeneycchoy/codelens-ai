@@ -15,8 +15,8 @@
     "Other"
   ],
   "scripts": {
-    "build": "esbuild src/extension.ts --bundle --outfile=dist/extension.js --external:vscode",
-    "watch": "esbuild src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --watch",
+    "build": "node esbuild.config.js",
+    "watch": "node esbuild.config.js --watch",
     "package": "vsce package",
     "validate": "node validate.js"
   },
