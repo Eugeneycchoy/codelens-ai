@@ -18,7 +18,7 @@
     "build": "esbuild src/extension.ts --bundle --outfile=dist/extension.js --external:vscode",
     "watch": "esbuild src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --watch",
     "package": "vsce package",
-    "validate": ""
+    "validate": "node validate.js"
   },
   "dependencies": {
     "ai": "^3.0.0",
