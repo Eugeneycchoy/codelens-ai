@@ -1,0 +1,7 @@
+{
+  "version": 3,
+  "sources": ["../src/extension.ts"],
+  "sourcesContent": ["import * as vscode from \"vscode\";\n\nexport function activate(context: vscode.ExtensionContext): void {\n  console.log(\"CodeLens AI extension is now active\");\n}\n\nexport function deactivate(): void {\n  console.log(\"CodeLens AI extension is now deactivated\");\n}\n"],
+  "mappings": ";;;;;;;;;;;;;;;;;;;;AAAA;AAAA;AAAA;AAAA;AAAA;AAAA;AAEO,SAAS,SAAS,SAAwC;AAC/D,UAAQ,IAAI,qCAAqC;AACnD;AAEO,SAAS,aAAmB;AACjC,UAAQ,IAAI,0CAA0C;AACxD;",
+  "names": []
+}
