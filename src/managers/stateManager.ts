@@ -92,6 +92,7 @@ export class StateManager {
 
   dispose(): void {
     if (this._setEnabledDebounceTimer !== undefined) {
+      void this.context.globalState.update(STATE_KEY, this._state);
       clearTimeout(this._setEnabledDebounceTimer);
       this._setEnabledDebounceTimer = undefined;
     }
