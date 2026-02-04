@@ -1,9 +1,8 @@
 import * as vscode from "vscode";
 import { AIService } from "../services/aiService";
 import { CacheService } from "../services/cacheService";
+import { CodeStructureDetector } from "../utils/codeStructureDetector";
 import { ContextExtractor } from "../utils/contextExtractor";
-
-const LOADING_MESSAGE = "⏳ Loading explanation…";
 
 const THEME_HIGHLIGHT = {
   dark: "rgba(0, 128, 128, 0.15)",
@@ -11,9 +10,16 @@ const THEME_HIGHLIGHT = {
   highContrast: "rgba(255, 255, 255, 0.1)",
 } as const;
 
+/** Prefix for cached error messages so we can show a Retry link. */
+const CACHED_ERROR_PREFIX = "Something went wrong:";
+
+/** Line range for "Learn More" context (more surrounding lines than hover). */
+const DETAILED_LINE_RANGE = 15;
+
 /**
  * Provides hover tooltips with AI-generated code explanations.
- * Checks cache first, shows loading state, then fetches async and caches for next hover.
+ * Checks cache first; on cache miss returns no hover and fetches in the background.
+ * User must re-hover to see the result after the fetch completes.
  * Applies a visual highlight to the hovered code block and clears it when the cursor moves away.
  */
 export class CodeLensHoverProvider
@@ -22,7 +28,10 @@ export class CodeLensHoverProvider
   private readonly aiService = new AIService();
   private readonly cacheService = new CacheService();
   private readonly contextExtractor = new ContextExtractor();
-  private isProcessing = false;
+  private readonly detector = new CodeStructureDetector();
+
+  /** Cancels the previous in-flight hover fetch when a new hover occurs or user moves away. */
+  private hoverCancelSource: vscode.CancellationTokenSource | null = null;
 
   private decorationType: vscode.TextEditorDecorationType | null = null;
   private lastDecoratedEditor: vscode.TextEditor | null = null;
@@ -47,14 +56,14 @@ export class CodeLensHoverProvider
         ) {
           this.clearDecoration();
         }
-      },
+      }
     );
     this.configListener = vscode.workspace.onDidChangeConfiguration((e) => {
       if (e.affectsConfiguration("codelensAI.highlightColor"))
         this.updateDecorationType();
     });
     this.themeListener = vscode.window.onDidChangeActiveColorTheme(() =>
-      this.updateDecorationType(),
+      this.updateDecorationType()
     );
   }
 
@@ -80,6 +89,17 @@ export class CodeLensHoverProvider
     });
   }
 
+  /** Returns the line index of the previous non-blank line, or 0 if none. */
+  private getPreviousNonBlankLine(
+    document: vscode.TextDocument,
+    fromLine: number
+  ): number {
+    for (let i = fromLine - 1; i >= 0; i--) {
+      if (document.lineAt(i).text.trim().length > 0) return i;
+    }
+    return 0;
+  }
+
   private clearDecoration(): void {
     if (this.lastDecoratedEditor && this.decorationType) {
       this.lastDecoratedEditor.setDecorations(this.decorationType, []);
@@ -90,7 +110,7 @@ export class CodeLensHoverProvider
 
   private applyDecoration(
     editor: vscode.TextEditor,
-    range: vscode.Range,
+    range: vscode.Range
   ): void {
     this.clearDecoration();
     if (!this.decorationType) return;
@@ -102,25 +122,102 @@ export class CodeLensHoverProvider
   provideHover(
     document: vscode.TextDocument,
     position: vscode.Position,
-    _token: vscode.CancellationToken,
+    _token: vscode.CancellationToken
   ): vscode.Hover | null {
-    const lineText = document.lineAt(position.line).text;
-    if (lineText.trim().length === 0) return null;
-    if (this.isProcessing) return null;
+    this.cancelPreviousHoverFetch();
+    if (this.detector.isComment(document, position)) return null;
 
-    const { code, context } = this.contextExtractor.extract(document, position);
+    const lineText = document.lineAt(position.line).text;
+    const isEmptyLine = lineText.trim().length === 0;
+
+    if (isEmptyLine) {
+      if (!this.detector.isEmptyLineInBlock(document, position)) return null;
+    }
+
+    let code: string;
+    let context: string;
+
+    if (isEmptyLine) {
+      const prevNonBlankLine = this.getPreviousNonBlankLine(
+        document,
+        position.line
+      );
+      const blockPosition = new vscode.Position(prevNonBlankLine, 0);
+      code = this.contextExtractor.extractBlock(document, blockPosition);
+      const { context: ctx } = this.contextExtractor.extract(
+        document,
+        position
+      );
+      context = ctx;
+    } else {
+      const extracted = this.contextExtractor.extract(document, position);
+      code = extracted.code;
+      context = extracted.context;
+    }
+
     if (code.length === 0) return null;
+
+    const range = document.lineAt(position.line).range;
+    const cached = this.cacheService.get(code);
+    if (cached !== null) {
+      const editor =
+        vscode.window.visibleTextEditors.find((e) => e.document === document) ??
+        (vscode.window.activeTextEditor?.document === document
+          ? vscode.window.activeTextEditor
+          : undefined);
+      if (editor) {
+        const highlightPosition = isEmptyLine
+          ? new vscode.Position(
+              this.getPreviousNonBlankLine(document, position.line),
+              0
+            )
+          : position;
+        let highlightRange: vscode.Range;
+        try {
+          const blockText = this.contextExtractor.extractBlock(
+            document,
+            highlightPosition
+          );
+          const blockLineCount = blockText.split("\n").length;
+          if (blockText.trim().length === 0 || blockLineCount > 15) {
+            highlightRange = document.lineAt(position.line).range;
+          } else {
+            highlightRange = this.contextExtractor.getBlockRange(
+              document,
+              highlightPosition
+            );
+          }
+        } catch {
+          highlightRange = document.lineAt(position.line).range;
+        }
+        this.applyDecoration(editor, highlightRange);
+      }
+      return new vscode.Hover(
+        this.createHoverContent(cached, code, context),
+        range
+      );
+    }
+
+    const highlightPosition = isEmptyLine
+      ? new vscode.Position(
+          this.getPreviousNonBlankLine(document, position.line),
+          0
+        )
+      : position;
 
     let highlightRange: vscode.Range;
     try {
-      const blockText = this.contextExtractor.extractBlock(document, position);
+      const blockText = this.contextExtractor.extractBlock(
+        document,
+        highlightPosition
+      );
       const blockLineCount = blockText.split("\n").length;
       if (blockText.trim().length === 0 || blockLineCount > 15) {
         highlightRange = document.lineAt(position.line).range;
       } else {
         highlightRange = this.contextExtractor.getBlockRange(
           document,
-          position,
+          highlightPosition
         );
       }
     } catch {
@@ -136,61 +233,65 @@ export class CodeLensHoverProvider
       this.applyDecoration(editor, highlightRange);
     }
 
-    const range = document.lineAt(position.line).range;
-    const cached = this.cacheService.get(code);
-    if (cached !== null) {
-      return new vscode.Hover(
-        this.createHoverContent(cached, code, context),
-        range,
-      );
-    }
+    const cancelSource = new vscode.CancellationTokenSource();
+    this.hoverCancelSource = cancelSource;
+    _token.onCancellationRequested(() => cancelSource.cancel());
 
-    void this.fetchExplanation(document, position, code, context, _token);
-    return new vscode.Hover(
-      this.createHoverContent(LOADING_MESSAGE, code, context),
-      range,
+    void this.fetchExplanation(
+      document,
+      position,
+      code,
+      context,
+      cancelSource.token
     );
+    return null;
+  }
+
+  private cancelPreviousHoverFetch(): void {
+    if (this.hoverCancelSource) {
+      this.hoverCancelSource.cancel();
+      this.hoverCancelSource.dispose();
+      this.hoverCancelSource = null;
+    }
   }
 
   /**
-   * Fetches explanation from AI, caches it, and avoids overlapping requests.
-   * Passes cancellation token so the request is aborted when hover is dismissed.
+   * Fetches explanation from AI in the background and caches on success.
+   * Uses the given cancellation token (from hover or new-hover supersede). Does not cache when cancelled.
    */
   private async fetchExplanation(
     document: vscode.TextDocument,
-    position: vscode.Position,
+    _position: vscode.Position,
     code: string,
     context: string,
-    token?: vscode.CancellationToken,
+    token?: vscode.CancellationToken
   ): Promise<void> {
-    this.isProcessing = true;
     try {
       const lang = document.languageId || "plaintext";
       const explanation = await this.aiService.explain(
         code,
         lang,
         context,
-        token,
+        token
       );
       if (token?.isCancellationRequested) return;
       if (explanation === "Request was cancelled.") return;
       this.cacheService.set(code, explanation);
     } catch (err) {
+      if (token?.isCancellationRequested) return;
       console.error("[CodeLens AI] fetchExplanation failed", err);
       const message = err instanceof Error ? err.message : String(err);
       this.cacheService.set(
         code,
-        `Something went wrong: ${message}. Try again or check the output panel for details.`,
+        `${CACHED_ERROR_PREFIX} ${message}. Try again or check the output panel for details.`
       );
-    } finally {
-      this.isProcessing = false;
     }
   }
 
   private createHoverContent(
     explanation: string,
     code: string,
-    context: string,
+    context: string
   ): vscode.MarkdownString {
     const md = new vscode.MarkdownString(undefined, true);
     md.isTrusted = true;
@@ -199,46 +300,161 @@ export class CodeLensHoverProvider
     md.appendMarkdown("\n\n---\n\n");
     const args = encodeURIComponent(JSON.stringify([code, context]));
     md.appendMarkdown(`[Learn More](command:codelens-ai.explainCode?${args})`);
+    if (explanation.startsWith(CACHED_ERROR_PREFIX)) {
+      md.appendMarkdown(" | ");
+      md.appendMarkdown(
+        `[Retry](command:codelens-ai.retryHoverExplanation?${args})`
+      );
+    }
     return md;
   }
 
   /**
-   * Used by the explainCode command: shows explanation in a webview panel with progress.
-   * If code/context are omitted, uses the active editor's selection.
+   * Clears the cached error for the given code and starts a new background fetch.
+   * User must re-hover to see the result (Flow 4).
+   */
+  retryExplanation(code: string, context: string): void {
+    const document = vscode.window.activeTextEditor?.document;
+    if (!document) {
+      void vscode.window.showWarningMessage(
+        "No active editor. Re-hover over the code to retry."
+      );
+      return;
+    }
+    this.cacheService.delete(code);
+    const position = new vscode.Position(0, 0);
+    void this.fetchExplanation(document, position, code, context, undefined);
+  }
+
+  /**
+   * Builds a short outline of the file (classes, functions, methods) for AI context.
+   * Uses CodeStructureDetector patterns so the model can relate the code to the file layout.
+   */
+  private getFileStructureSummary(document: vscode.TextDocument): string {
+    const patterns = this.detector.getLanguagePatterns(
+      document.languageId
+    ).structural;
+    const outlineLines: string[] = [];
+    const keys: (keyof typeof patterns)[] = [
+      "class",
+      "function",
+      "method",
+      "component",
+      "arrowFunction",
+      "arrowFunctionShort",
+    ];
+    for (let i = 0; i < document.lineCount; i++) {
+      const line = document.lineAt(i).text;
+      for (const key of keys) {
+        const re = patterns[key];
+        if (re?.test(line)) {
+          outlineLines.push(`${i + 1}: ${line.trim()}`);
+          break;
+        }
+      }
+    }
+    return outlineLines.length > 0 ? outlineLines.join("\n") : "";
+  }
+
+  /**
+   * Tries to find a position in the document where the given code (or its first line) appears.
+   * Returns null if not found so caller can fall back to passed context.
+   */
+  private findPositionForCode(
+    document: vscode.TextDocument,
+    code: string
+  ): vscode.Position | null {
+    const firstLine = code.split("\n")[0]?.trim() ?? "";
+    if (firstLine.length === 0) return null;
+    for (let i = 0; i < document.lineCount; i++) {
+      if (document.lineAt(i).text.trim() === firstLine) {
+        return new vscode.Position(i, 0);
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Used by the explainCode command: shows a detailed explanation in a webview panel.
+   * Uses more surrounding lines, file structure, and a detailed AI prompt. If code/context
+   * are omitted, uses the active editor's selection.
    */
   async explainCode(code?: string, context?: string): Promise<void> {
+    const editor = vscode.window.activeTextEditor;
+    let document: vscode.TextDocument | undefined = editor?.document;
+    let position: vscode.Position | undefined;
+    let resolvedCode: string;
+    let resolvedContext: string;
+
     if (code === undefined || code === "") {
-      const editor = vscode.window.activeTextEditor;
       if (!editor) {
         vscode.window.showWarningMessage(
-          "No active editor. Select code or hover a line first.",
+          "No active editor. Select code or hover a line first."
         );
         return;
       }
       const selection = editor.selection;
-      const document = editor.document;
-      code = document.getText(selection).trim();
-      if (code.length === 0) {
-        const line = document.lineAt(selection.active.line);
-        code = line.text.trim();
-        const { context: ctx } = this.contextExtractor.extract(
-          document,
-          selection.active,
+      const doc = editor.document;
+      document = doc;
+      resolvedCode = doc.getText(selection).trim();
+      if (resolvedCode.length === 0) {
+        position = selection.active;
+        const line = doc.lineAt(position.line);
+        resolvedCode = line.text.trim();
+        const extracted = this.contextExtractor.extract(
+          doc,
+          position,
+          DETAILED_LINE_RANGE
         );
-        context = ctx;
+        resolvedContext = extracted.context;
       } else {
-        context = context ?? "";
+        position = selection.start;
+        const extracted = this.contextExtractor.extract(
+          doc,
+          selection.active,
+          DETAILED_LINE_RANGE
+        );
+        resolvedContext = extracted.context;
+      }
+    } else {
+      resolvedCode = code;
+      if (document) {
+        const pos = this.findPositionForCode(document, code);
+        if (pos !== null) {
+          position = pos;
+          const extracted = this.contextExtractor.extract(
+            document,
+            pos,
+            DETAILED_LINE_RANGE
+          );
+          resolvedContext = extracted.context;
+        } else {
+          // Position not found; avoid regressing to the 5-line hover context.
+          // Use a wider fallback so detailed flow still gets DETAILED_LINE_RANGE context.
+          const fallbackPos = new vscode.Position(0, 0);
+          const extracted = this.contextExtractor.extract(
+            document,
+            fallbackPos,
+            DETAILED_LINE_RANGE
+          );
+          resolvedContext = extracted.context;
+        }
+      } else {
+        resolvedContext = context ?? "";
       }
     }
-    if (code.length === 0) {
+
+    if (resolvedCode.length === 0) {
       vscode.window.showWarningMessage(
-        "No code to explain. Select something or hover a line.",
+        "No code to explain. Select something or hover a line."
       );
       return;
     }
 
-    const lang =
-      vscode.window.activeTextEditor?.document.languageId ?? "plaintext";
+    const lang = document?.languageId ?? "plaintext";
+    const fileStructure =
+      document != null ? this.getFileStructureSummary(document) : "";
+
     let explanation: string;
     try {
       explanation = await vscode.window.withProgress(
@@ -247,14 +463,25 @@ export class CodeLensHoverProvider
           title: "CodeLens AI",
           cancellable: false,
         },
-        async () => this.aiService.explain(code!, lang, context),
+        async () =>
+          this.aiService.explain(
+            resolvedCode,
+            lang,
+            resolvedContext,
+            undefined,
+            {
+              detailLevel: "detailed",
+              fileStructure: fileStructure || undefined,
+            }
+          )
       );
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       vscode.window.showErrorMessage(`CodeLens AI: ${message}`);
       return;
     }
-    this.cacheService.set(code, explanation);
+    // Do not cache detailed explanation under the same key as hover; otherwise
+    // the brief hover tooltip would be overwritten and show the long text on re-hover.
     this.showExplanationPanel(explanation);
   }
 
@@ -264,13 +491,14 @@ export class CodeLensHoverProvider
       "codelensAiExplain",
       title,
       vscode.ViewColumn.Beside,
-      { enableScripts: false },
+      { enableScripts: false }
     );
     const escaped = escapeHtml(explanation);
     panel.webview.html = getExplanationHtml(escaped);
   }
 
   dispose(): void {
+    this.cancelPreviousHoverFetch();
     this.clearDecoration();
     this.decorationType?.dispose();
     this.decorationType = null;
