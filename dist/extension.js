@@ -16253,14 +16253,15 @@ var AIService = class {
    * Request an explanation for the given code. Routes to the configured provider.
    * Returns a user-friendly error message on failure instead of throwing.
    * Optional cancellationToken aborts the request when cancelled (e.g. hover dismissed).
+   * Use explainOptions.detailLevel "detailed" and fileStructure for richer "Learn More" explanations.
    */
-  async explain(code, lang, context, cancellationToken) {
+  async explain(code, lang, context, cancellationToken, explainOptions) {
     const cfg = this.getConfig();
     if ((cfg.provider === "openai" || cfg.provider === "anthropic") && !cfg.apiKey) {
       const apiKeyHint = cfg.apiBase ? "Please set `codelensAI.apiKey` and verify `codelensAI.apiBase` in settings for the selected provider." : "Please set `codelensAI.apiKey` in settings for the selected provider.";
       return apiKeyHint;
     }
-    const prompt = this.buildPrompt(code, lang, context);
+    const prompt = this.buildPrompt(code, lang, context, explainOptions);
     const signal = cancellationTokenToAbortSignal(cancellationToken);
     try {
       switch (cfg.provider) {
@@ -16356,27 +16357,51 @@ var AIService = class {
     return void 0;
   }
   /**
-   * Builds a prompt that asks for what/why/patterns, concise, without repeating the code.
+   * Builds a prompt for the AI. When detailLevel is "detailed", asks for an in-depth
+   * explanation with step-by-step breakdown, edge cases, and file-structure context.
    */
-  buildPrompt(code, lang, context) {
+  buildPrompt(code, lang, context, options) {
     const contextBlock = context ? `
 
 Surrounding context (for reference only):
 \`\`\`
 ${context}
 \`\`\`` : "";
-    return `Explain this code in ONE short sentence. Like you're texting a friend who just started coding.
+    const fileStructureBlock = options?.fileStructure?.trim() && options.detailLevel === "detailed" ? `
 
-      Rules:
-      - Max 15 words
-      - No jargon
-      - Casual tone
-      
-      Example: \`arr.filter(x => x > 0)\` \u2192 "Keeps only the positive numbers, tosses the rest."
-      
-      \`\`\`
-      ${code}
-      \`\`\`${contextBlock}`;
+File structure (outline of top-level declarations in this file):
+\`\`\`
+${options.fileStructure.trim()}
+\`\`\`` : "";
+    if (options?.detailLevel === "detailed") {
+      return `Explain the following ${lang} code in detail for a developer who wants to understand it deeply.
+
+Your explanation should include:
+- **What**: Clear description of what the code does (2\u20133 sentences)
+- **Why**: Purpose and rationale; why it might be written this way
+- **Step-by-step**: How the code achieves its goal (key steps or control flow)
+- **Patterns & techniques**: Notable patterns, conventions, or language features used
+- **Edge cases / caveats**: Any gotchas, assumptions, or things to watch for
+- **Context**: How this fits with the surrounding code or file structure (use the file outline if provided)
+
+Be thorough but organized. Use short paragraphs or bullet points. Do not repeat the code verbatim.
+
+\`\`\`${lang}
+${code}
+\`\`\`${contextBlock}${fileStructureBlock}`;
+    }
+    return `Explain the following ${lang} code concisely.
+
+Your explanation should:
+- What: Describe what the code does in 1-2 sentences
+- Why: Explain why it might exist or its purpose
+- Patterns: Note any notable patterns or techniques used
+
+Keep your explanation brief but insightful. Do not repeat the code back.
+
+\`\`\`${lang}
+${code}
+\`\`\`${contextBlock}`;
   }
   async callOpenAI(prompt, model, apiKey, signal) {
     const client = new openai_default({ apiKey });
@@ -16471,8 +16496,430 @@ var CacheService = class {
       timestamp: Date.now()
     });
   }
+  /**
+   * Deletes a single cache entry for the given code.
+   * Use this for targeted invalidation (e.g., refresh) instead of clear().
+   */
+  delete(code) {
+    const key = this.generateKey(code);
+    this.cache.delete(key);
+  }
   clear() {
     this.cache.clear();
+  }
+};
+
+// src/utils/codeStructureDetector.ts
+function buildTypeScriptPatterns() {
+  return {
+    comments: {
+      singleLine: /^\s*\/\//,
+      singleLineMarker: /\/\//,
+      multiLine: { start: /\/\*/, end: /\*\// },
+      doc: { start: /^\s*\/\*\*/, end: /\*\// },
+      multiLineGlobal: { start: /\/\*/g, end: /\*\//g },
+      docStartGlobal: /^\s*\/\*\*/g
+    },
+    structural: {
+      function: /^\s*(export\s+)?(async\s+)?function\s+\w+/,
+      arrowFunction: /^\s*(export\s+)?(const|let|var)\s+\w+\s*=\s*(async\s+)?\(/,
+      arrowFunctionShort: /^\s*(export\s+)?(const|let|var)\s+\w+\s*=\s*(async\s+)?(\w+|\([^)]*\))\s*=>/,
+      class: /^\s*(export\s+)?(abstract\s+)?class\s+\w+/,
+      method: /^\s*(public|private|protected|static|async|\s)*\w+\s*\([^)]*\)\s*[:{]/,
+      component: /^\s*(export\s+)?(const|function)\s+[A-Z]\w+/,
+      complexVariable: /^\s*(export\s+)?(const|let|var)\s+\w+\s*=\s*(new\s+\w+|\{|\[|function|class)/
+    },
+    simple: {
+      import: /^\s*import\s+/,
+      export: /^\s*export\s+/,
+      emptyOrWhitespace: /^\s*$/
+    },
+    classification: buildJsLikeClassificationPatterns()
+  };
+}
+function buildJavaScriptPatterns() {
+  return {
+    comments: {
+      singleLine: /^\s*\/\//,
+      singleLineMarker: /\/\//,
+      multiLine: { start: /\/\*/, end: /\*\// },
+      doc: { start: /^\s*\/\*\*/, end: /\*\// },
+      multiLineGlobal: { start: /\/\*/g, end: /\*\//g },
+      docStartGlobal: /^\s*\/\*\*/g
+    },
+    structural: {
+      function: /^\s*(export\s+)?(async\s+)?function\s+\w+/,
+      arrowFunction: /^\s*(export\s+)?(const|let|var)\s+\w+\s*=\s*(async\s+)?\(/,
+      arrowFunctionShort: /^\s*(export\s+)?(const|let|var)\s+\w+\s*=\s*(async\s+)?(\w+|\([^)]*\))\s*=>/,
+      class: /^\s*(export\s+)?class\s+\w+/,
+      method: /^\s*(async\s+)?\w+\s*\([^)]*\)\s*\{/,
+      component: /^\s*(export\s+)?(const|function)\s+[A-Z]\w+/,
+      complexVariable: /^\s*(export\s+)?(const|let|var)\s+\w+\s*=\s*(new\s+\w+|\{|\[|function|class)/
+    },
+    simple: {
+      import: /^\s*import\s+/,
+      export: /^\s*export\s+/,
+      emptyOrWhitespace: /^\s*$/
+    },
+    classification: buildJsLikeClassificationPatterns()
+  };
+}
+function buildPythonPatterns() {
+  return {
+    comments: {
+      singleLine: /^\s*#/,
+      singleLineMarker: /#/,
+      multiLine: { start: /"""/, end: /"""/ },
+      doc: { start: /^\s*"""/, end: /"""/ },
+      multiLineGlobal: { start: /"""/g, end: /"""/g },
+      docStartGlobal: /^\s*"""/g
+    },
+    structural: {
+      function: /^\s*(async\s+)?def\s+\w+/,
+      class: /^\s*class\s+\w+/,
+      method: /^\s+def\s+\w+\s*\(/
+    },
+    simple: {
+      import: /^\s*import\s+|^\s*from\s+\S+\s+import/,
+      emptyOrWhitespace: /^\s*$/
+    },
+    classification: buildPythonClassificationPatterns()
+  };
+}
+function buildFallbackPatterns() {
+  return {
+    comments: {
+      singleLine: /^\s*\/\//,
+      multiLine: { start: /\/\*/, end: /\*\// },
+      multiLineGlobal: { start: /\/\*/g, end: /\*\//g }
+    },
+    structural: {
+      function: /^\s*function\s+\w+|^\s*\w+\s*\([^)]*\)\s*\{/,
+      class: /^\s*class\s+\w+/
+    },
+    simple: {
+      emptyOrWhitespace: /^\s*$/
+    },
+    classification: buildJsLikeClassificationPatterns()
+  };
+}
+function buildJsLikeClassificationPatterns() {
+  return {
+    structural: [
+      /^\s*if\s*\(/,
+      /^\s*for\s*\(/,
+      /^\s*while\s*\(/,
+      /^\s*(export\s+)?(async\s+)?function\s+\w+/,
+      /^\s*(export\s+)?(abstract\s+)?class\s+\w+/,
+      /^\s*try\s*\{/,
+      /^\s*catch\s*\(/,
+      /^\s*finally\s*\{/,
+      /^\s*else\s*\{/,
+      /^\s*else\s+if\s*\(/,
+      /^\s*switch\s*\(/,
+      /^\s*(export\s+)?(const|let|var)\s+\w+\s*=\s*(async\s+)?\(/,
+      /^\s*(export\s+)?(const|let|var)\s+\w+\s*=\s*(async\s+)?(\w+|\([^)]*\))\s*=>/,
+      /^\s*(public|private|protected|static|async|\s)*\w+\s*\([^)]*\)\s*[:{]/,
+      /^\s*(export\s+)?(const|function)\s+[A-Z]\w+/,
+      /^\s*(export\s+)?(const|let|var)\s+\w+\s*=\s*(new\s+\w+|\{|\[|function|class)/
+    ],
+    simple: [
+      /^\s*const\s+/,
+      /^\s*let\s+/,
+      /^\s*var\s+/,
+      /^\s*return\s+/,
+      /^\s*return\s*;/,
+      /^\s*import\s+/,
+      /^\s*export\s+/
+    ]
+  };
+}
+function buildPythonClassificationPatterns() {
+  return {
+    structural: [
+      /^\s*if\s+/,
+      /^\s*elif\s+/,
+      /^\s*else\s*:/,
+      /^\s*for\s+/,
+      /^\s*while\s+/,
+      /^\s*(async\s+)?def\s+\w+/,
+      /^\s*class\s+\w+/,
+      /^\s*try\s*:/,
+      /^\s*except\s+/,
+      /^\s*except\s*:/,
+      /^\s*finally\s*:/,
+      /^\s+def\s+\w+\s*\(/
+    ],
+    simple: [
+      /^\s*import\s+/,
+      /^\s*from\s+\S+\s+import/,
+      /^\s*return\s+/,
+      /^\s*return\s*$/
+    ]
+  };
+}
+var SUPPORTED_LANGUAGE_IDS = /* @__PURE__ */ new Set([
+  "typescript",
+  "javascript",
+  "typescriptreact",
+  "javascriptreact",
+  "python"
+]);
+var MAX_BACKWARD_SCAN_LINES = 100;
+var CodeStructureDetector = class {
+  registry;
+  fallback;
+  constructor() {
+    this.registry = /* @__PURE__ */ new Map();
+    this.registry.set("typescript", buildTypeScriptPatterns());
+    this.registry.set("javascript", buildJavaScriptPatterns());
+    this.registry.set("typescriptreact", buildTypeScriptPatterns());
+    this.registry.set("javascriptreact", buildJavaScriptPatterns());
+    this.registry.set("python", buildPythonPatterns());
+    this.fallback = buildFallbackPatterns();
+  }
+  /**
+   * Returns the pattern set for the given language ID.
+   * Use this when you need comment, structural, or simple patterns for a language.
+   * Uses generic fallback when the language is not in the registry.
+   *
+   * @param languageId - VS Code language id (e.g. "typescript", "python"). Case-insensitive.
+   * @returns The cached language patterns; never allocates new regex.
+   */
+  getLanguagePatterns(languageId) {
+    return this.getPatterns(languageId);
+  }
+  /**
+   * Returns the pattern set for the given language ID.
+   * Uses generic fallback when the language is not in the registry.
+   * @internal Prefer {@link getLanguagePatterns} for public API.
+   */
+  getPatterns(languageId) {
+    const normalized = languageId.toLowerCase();
+    return this.registry.get(normalized) ?? this.fallback;
+  }
+  /** Returns true if the language has dedicated (non-fallback) patterns. */
+  isSupported(languageId) {
+    return SUPPORTED_LANGUAGE_IDS.has(languageId.toLowerCase());
+  }
+  /** Returns the length of leading whitespace on the line (spaces/tabs). */
+  getLeadingWhitespaceLength(text) {
+    const m2 = text.match(/^\s*/);
+    return m2 ? m2[0].length : 0;
+  }
+  /** Returns true if the line matches any of the given line-start patterns. */
+  matchAnyPattern(lineText, patterns) {
+    for (const re2 of patterns) {
+      if (re2.test(lineText))
+        return true;
+    }
+    return false;
+  }
+  /**
+   * Finds the nearest non-blank line at or above fromLine and returns its indent and index.
+   * Returns null if no non-blank line exists above.
+   */
+  getPreviousNonBlankLineInfo(document, fromLine) {
+    let lineIndex = fromLine - 1;
+    while (lineIndex >= 0) {
+      const text = document.lineAt(lineIndex).text;
+      if (text.trim().length > 0) {
+        return {
+          indent: this.getLeadingWhitespaceLength(text),
+          lineIndex
+        };
+      }
+      lineIndex--;
+    }
+    return null;
+  }
+  /**
+   * Finds the nearest non-blank line at or below fromLine and returns its indent and index.
+   * Returns null if no non-blank line exists below.
+   */
+  getNextNonBlankLineInfo(document, fromLine, lineCount) {
+    let lineIndex = fromLine + 1;
+    while (lineIndex < lineCount) {
+      const text = document.lineAt(lineIndex).text;
+      if (text.trim().length > 0) {
+        return {
+          indent: this.getLeadingWhitespaceLength(text),
+          lineIndex
+        };
+      }
+      lineIndex++;
+    }
+    return null;
+  }
+  /**
+   * Classifies the line at the given position as 'structural' (if/for/while/function/class/try etc.),
+   * 'simple' (const/let/var/return/import), or 'unknown'. Uses keyword patterns first, then an
+   * indentation-based fallback for ambiguous cases (e.g. indented body line with no keyword).
+   */
+  classify(document, position) {
+    const { lineCount } = document;
+    if (lineCount === 0 || position.line < 0 || position.line >= lineCount) {
+      return "unknown";
+    }
+    const patterns = this.getPatterns(document.languageId);
+    const lineText = document.lineAt(position.line).text;
+    if (lineText.trim().length === 0) {
+      return "unknown";
+    }
+    const classification = patterns.classification;
+    if (classification) {
+      if (this.matchAnyPattern(lineText, classification.structural)) {
+        return "structural";
+      }
+      if (this.matchAnyPattern(lineText, classification.simple)) {
+        return "simple";
+      }
+    }
+    const leadingSpaces = this.getLeadingWhitespaceLength(lineText);
+    const prev = this.getPreviousNonBlankLineInfo(document, position.line);
+    if (prev !== null && leadingSpaces > prev.indent) {
+      return "structural";
+    }
+    return "unknown";
+  }
+  /**
+   * Returns true if the given position is inside a comment (single-line,
+   * multi-line, or doc comment). Uses language-specific patterns and
+   * backward scanning (up to MAX_BACKWARD_SCAN_LINES) for multi-line blocks.
+   */
+  isComment(document, position) {
+    const { lineCount } = document;
+    if (lineCount === 0 || position.line < 0 || position.line >= lineCount) {
+      return false;
+    }
+    const patterns = this.getPatterns(document.languageId);
+    const lineText = document.lineAt(position.line).text;
+    if (patterns.comments.singleLine.test(lineText)) {
+      return true;
+    }
+    if (patterns.comments.singleLineMarker) {
+      const m2 = patterns.comments.singleLineMarker.exec(lineText);
+      if (m2 !== null) {
+        return position.character >= m2.index;
+      }
+    }
+    const positionOffset = document.offsetAt(position);
+    const startLine = Math.max(0, position.line - MAX_BACKWARD_SCAN_LINES);
+    const events = [];
+    let offsetSoFar = 0;
+    for (let i2 = 0; i2 < startLine; i2++) {
+      offsetSoFar += document.lineAt(i2).text.length + 1;
+    }
+    const multiSame = patterns.comments.multiLine.start.source === patterns.comments.multiLine.end.source;
+    const multiStartG = patterns.comments.multiLineGlobal?.start ?? new RegExp(patterns.comments.multiLine.start.source, "g");
+    const multiEndG = patterns.comments.multiLineGlobal?.end ?? new RegExp(patterns.comments.multiLine.end.source, "g");
+    const docStartG = patterns.comments.doc ? patterns.comments.docStartGlobal ?? new RegExp(patterns.comments.doc.start.source, "g") : null;
+    const addMatchesFromGlobal = (lineText2, lineStartOffset, g2, type, endOffsetPlusLength, skipStartOffsets) => {
+      g2.lastIndex = 0;
+      let m2;
+      while ((m2 = g2.exec(lineText2)) !== null) {
+        const offset = lineStartOffset + m2.index;
+        if (type === "start" && skipStartOffsets?.has(offset)) {
+          continue;
+        }
+        const eventOffset = type === "end" && endOffsetPlusLength ? offset + m2[0].length : offset;
+        if (offset <= positionOffset) {
+          events.push({ offset: eventOffset, type });
+        }
+      }
+    };
+    for (let i2 = startLine; i2 <= position.line; i2++) {
+      const text = document.lineAt(i2).text;
+      const lineStart = offsetSoFar;
+      offsetSoFar += text.length + 1;
+      const docStartOffsets = /* @__PURE__ */ new Set();
+      if (docStartG) {
+        docStartG.lastIndex = 0;
+        let m2;
+        while ((m2 = docStartG.exec(text)) !== null) {
+          const offset = lineStart + m2.index;
+          if (offset <= positionOffset)
+            docStartOffsets.add(offset);
+        }
+      }
+      if (multiSame) {
+        multiStartG.lastIndex = 0;
+        const positions = [];
+        let m2;
+        while ((m2 = multiStartG.exec(text)) !== null) {
+          const offset = lineStart + m2.index;
+          if (offset <= positionOffset)
+            positions.push({ offset, len: m2[0].length });
+        }
+        positions.sort((a2, b2) => a2.offset - b2.offset);
+        for (let k2 = 0; k2 < positions.length; k2++) {
+          const { offset, len } = positions[k2];
+          events.push({
+            offset: k2 % 2 === 0 ? offset : offset + len,
+            type: k2 % 2 === 0 ? "start" : "end"
+          });
+        }
+      } else {
+        addMatchesFromGlobal(
+          text,
+          lineStart,
+          multiStartG,
+          "start",
+          false,
+          docStartOffsets
+        );
+        addMatchesFromGlobal(text, lineStart, multiEndG, "end", true);
+        if (docStartG) {
+          addMatchesFromGlobal(text, lineStart, docStartG, "start", false);
+        }
+      }
+    }
+    events.sort((a2, b2) => a2.offset - b2.offset);
+    let stack = 0;
+    for (const e2 of events) {
+      if (e2.offset > positionOffset)
+        break;
+      if (e2.type === "start")
+        stack++;
+      else
+        stack--;
+    }
+    return stack > 0;
+  }
+  /**
+   * Returns true if the line at the given position is empty (or whitespace-only)
+   * and lies within a code block, i.e. between non-empty lines where at least one
+   * has indentation (so we're not in a top-level gap between statements).
+   * Scans upward and downward for the nearest non-empty lines and compares
+   * indentation to decide. Returns false for start/end of file or when the line
+   * is not empty.
+   */
+  isEmptyLineInBlock(document, position) {
+    const { lineCount } = document;
+    if (lineCount === 0 || position.line < 0 || position.line >= lineCount) {
+      return false;
+    }
+    const lineText = document.lineAt(position.line).text;
+    if (lineText.trim().length > 0) {
+      return false;
+    }
+    const prev = this.getPreviousNonBlankLineInfo(document, position.line);
+    const next = this.getNextNonBlankLineInfo(
+      document,
+      position.line,
+      lineCount
+    );
+    if (prev === null || next === null) {
+      return false;
+    }
+    if (prev.indent > 0 || next.indent > 0) {
+      return true;
+    }
+    const prevTrimmed = document.lineAt(prev.lineIndex).text.trim();
+    const nextTrimmed = document.lineAt(next.lineIndex).text.trim();
+    const isOpeningBraceLine = prevTrimmed.endsWith("{");
+    const isClosingBraceLine = nextTrimmed === "}" || nextTrimmed === "};" || nextTrimmed === "},";
+    return isOpeningBraceLine && isClosingBraceLine;
   }
 };
 
@@ -16577,17 +17024,20 @@ var ContextExtractor = class {
 };
 
 // src/providers/hoverProvider.ts
-var LOADING_MESSAGE = "\u23F3 Loading explanation\u2026";
 var THEME_HIGHLIGHT = {
   dark: "rgba(0, 128, 128, 0.15)",
   light: "rgba(0, 128, 128, 0.25)",
   highContrast: "rgba(255, 255, 255, 0.1)"
 };
+var CACHED_ERROR_PREFIX = "Something went wrong:";
+var DETAILED_LINE_RANGE = 15;
 var CodeLensHoverProvider = class {
   aiService = new AIService();
   cacheService = new CacheService();
   contextExtractor = new ContextExtractor();
-  isProcessing = false;
+  detector = new CodeStructureDetector();
+  /** Cancels the previous in-flight hover fetch when a new hover occurs or user moves away. */
+  hoverCancelSource = null;
   decorationType = null;
   lastDecoratedEditor = null;
   lastDecoratedRange = null;
@@ -16634,6 +17084,14 @@ var CodeLensHoverProvider = class {
       backgroundColor: this.getHighlightColor()
     });
   }
+  /** Returns the line index of the previous non-blank line, or 0 if none. */
+  getPreviousNonBlankLine(document, fromLine) {
+    for (let i2 = fromLine - 1; i2 >= 0; i2--) {
+      if (document.lineAt(i2).text.trim().length > 0)
+        return i2;
+    }
+    return 0;
+  }
   clearDecoration() {
     if (this.lastDecoratedEditor && this.decorationType) {
       this.lastDecoratedEditor.setDecorations(this.decorationType, []);
@@ -16650,24 +17108,87 @@ var CodeLensHoverProvider = class {
     editor.setDecorations(this.decorationType, [range]);
   }
   provideHover(document, position, _token) {
+    this.cancelPreviousHoverFetch();
+    if (this.detector.isComment(document, position))
+      return null;
     const lineText = document.lineAt(position.line).text;
-    if (lineText.trim().length === 0)
-      return null;
-    if (this.isProcessing)
-      return null;
-    const { code, context } = this.contextExtractor.extract(document, position);
+    const isEmptyLine = lineText.trim().length === 0;
+    if (isEmptyLine) {
+      if (!this.detector.isEmptyLineInBlock(document, position))
+        return null;
+    }
+    let code;
+    let context;
+    if (isEmptyLine) {
+      const prevNonBlankLine = this.getPreviousNonBlankLine(
+        document,
+        position.line
+      );
+      const blockPosition = new vscode3.Position(prevNonBlankLine, 0);
+      code = this.contextExtractor.extractBlock(document, blockPosition);
+      const { context: ctx } = this.contextExtractor.extract(
+        document,
+        position
+      );
+      context = ctx;
+    } else {
+      const extracted = this.contextExtractor.extract(document, position);
+      code = extracted.code;
+      context = extracted.context;
+    }
     if (code.length === 0)
       return null;
+    const range = document.lineAt(position.line).range;
+    const cached = this.cacheService.get(code);
+    if (cached !== null) {
+      const editor2 = vscode3.window.visibleTextEditors.find((e2) => e2.document === document) ?? (vscode3.window.activeTextEditor?.document === document ? vscode3.window.activeTextEditor : void 0);
+      if (editor2) {
+        const highlightPosition2 = isEmptyLine ? new vscode3.Position(
+          this.getPreviousNonBlankLine(document, position.line),
+          0
+        ) : position;
+        let highlightRange2;
+        try {
+          const blockText = this.contextExtractor.extractBlock(
+            document,
+            highlightPosition2
+          );
+          const blockLineCount = blockText.split("\n").length;
+          if (blockText.trim().length === 0 || blockLineCount > 15) {
+            highlightRange2 = document.lineAt(position.line).range;
+          } else {
+            highlightRange2 = this.contextExtractor.getBlockRange(
+              document,
+              highlightPosition2
+            );
+          }
+        } catch {
+          highlightRange2 = document.lineAt(position.line).range;
+        }
+        this.applyDecoration(editor2, highlightRange2);
+      }
+      return new vscode3.Hover(
+        this.createHoverContent(cached, code, context),
+        range
+      );
+    }
+    const highlightPosition = isEmptyLine ? new vscode3.Position(
+      this.getPreviousNonBlankLine(document, position.line),
+      0
+    ) : position;
     let highlightRange;
     try {
-      const blockText = this.contextExtractor.extractBlock(document, position);
+      const blockText = this.contextExtractor.extractBlock(
+        document,
+        highlightPosition
+      );
       const blockLineCount = blockText.split("\n").length;
       if (blockText.trim().length === 0 || blockLineCount > 15) {
         highlightRange = document.lineAt(position.line).range;
       } else {
         highlightRange = this.contextExtractor.getBlockRange(
           document,
-          position
+          highlightPosition
         );
       }
     } catch {
@@ -16677,26 +17198,30 @@ var CodeLensHoverProvider = class {
     if (editor) {
       this.applyDecoration(editor, highlightRange);
     }
-    const range = document.lineAt(position.line).range;
-    const cached = this.cacheService.get(code);
-    if (cached !== null) {
-      return new vscode3.Hover(
-        this.createHoverContent(cached, code, context),
-        range
-      );
-    }
-    void this.fetchExplanation(document, position, code, context, _token);
-    return new vscode3.Hover(
-      this.createHoverContent(LOADING_MESSAGE, code, context),
-      range
+    const cancelSource = new vscode3.CancellationTokenSource();
+    this.hoverCancelSource = cancelSource;
+    _token.onCancellationRequested(() => cancelSource.cancel());
+    void this.fetchExplanation(
+      document,
+      position,
+      code,
+      context,
+      cancelSource.token
     );
+    return null;
+  }
+  cancelPreviousHoverFetch() {
+    if (this.hoverCancelSource) {
+      this.hoverCancelSource.cancel();
+      this.hoverCancelSource.dispose();
+      this.hoverCancelSource = null;
+    }
   }
   /**
-   * Fetches explanation from AI, caches it, and avoids overlapping requests.
-   * Passes cancellation token so the request is aborted when hover is dismissed.
+   * Fetches explanation from AI in the background and caches on success.
+   * Uses the given cancellation token (from hover or new-hover supersede). Does not cache when cancelled.
    */
-  async fetchExplanation(document, position, code, context, token) {
-    this.isProcessing = true;
+  async fetchExplanation(document, _position, code, context, token) {
     try {
       const lang = document.languageId || "plaintext";
       const explanation = await this.aiService.explain(
@@ -16711,14 +17236,14 @@ var CodeLensHoverProvider = class {
         return;
       this.cacheService.set(code, explanation);
     } catch (err) {
+      if (token?.isCancellationRequested)
+        return;
       console.error("[CodeLens AI] fetchExplanation failed", err);
       const message = err instanceof Error ? err.message : String(err);
       this.cacheService.set(
         code,
-        `Something went wrong: ${message}. Try again or check the output panel for details.`
+        `${CACHED_ERROR_PREFIX} ${message}. Try again or check the output panel for details.`
       );
-    } finally {
-      this.isProcessing = false;
     }
   }
   createHoverContent(explanation, code, context) {
@@ -16729,15 +17254,84 @@ var CodeLensHoverProvider = class {
     md.appendMarkdown("\n\n---\n\n");
     const args = encodeURIComponent(JSON.stringify([code, context]));
     md.appendMarkdown(`[Learn More](command:codelens-ai.explainCode?${args})`);
+    if (explanation.startsWith(CACHED_ERROR_PREFIX)) {
+      md.appendMarkdown(" | ");
+      md.appendMarkdown(
+        `[Retry](command:codelens-ai.retryHoverExplanation?${args})`
+      );
+    }
     return md;
   }
   /**
-   * Used by the explainCode command: shows explanation in a webview panel with progress.
-   * If code/context are omitted, uses the active editor's selection.
+   * Clears the cached error for the given code and starts a new background fetch.
+   * User must re-hover to see the result (Flow 4).
+   */
+  retryExplanation(code, context) {
+    const document = vscode3.window.activeTextEditor?.document;
+    if (!document) {
+      void vscode3.window.showWarningMessage(
+        "No active editor. Re-hover over the code to retry."
+      );
+      return;
+    }
+    this.cacheService.delete(code);
+    const position = new vscode3.Position(0, 0);
+    void this.fetchExplanation(document, position, code, context, void 0);
+  }
+  /**
+   * Builds a short outline of the file (classes, functions, methods) for AI context.
+   * Uses CodeStructureDetector patterns so the model can relate the code to the file layout.
+   */
+  getFileStructureSummary(document) {
+    const patterns = this.detector.getLanguagePatterns(document.languageId).structural;
+    const outlineLines = [];
+    const keys = [
+      "class",
+      "function",
+      "method",
+      "component",
+      "arrowFunction",
+      "arrowFunctionShort"
+    ];
+    for (let i2 = 0; i2 < document.lineCount; i2++) {
+      const line = document.lineAt(i2).text;
+      for (const key of keys) {
+        const re2 = patterns[key];
+        if (re2?.test(line)) {
+          outlineLines.push(`${i2 + 1}: ${line.trim()}`);
+          break;
+        }
+      }
+    }
+    return outlineLines.length > 0 ? outlineLines.join("\n") : "";
+  }
+  /**
+   * Tries to find a position in the document where the given code (or its first line) appears.
+   * Returns null if not found so caller can fall back to passed context.
+   */
+  findPositionForCode(document, code) {
+    const firstLine = code.split("\n")[0]?.trim() ?? "";
+    if (firstLine.length === 0)
+      return null;
+    for (let i2 = 0; i2 < document.lineCount; i2++) {
+      if (document.lineAt(i2).text.trim() === firstLine) {
+        return new vscode3.Position(i2, 0);
+      }
+    }
+    return null;
+  }
+  /**
+   * Used by the explainCode command: shows a detailed explanation in a webview panel.
+   * Uses more surrounding lines, file structure, and a detailed AI prompt. If code/context
+   * are omitted, uses the active editor's selection.
    */
   async explainCode(code, context) {
+    const editor = vscode3.window.activeTextEditor;
+    let document = editor?.document;
+    let position;
+    let resolvedCode;
+    let resolvedContext;
     if (code === void 0 || code === "") {
-      const editor = vscode3.window.activeTextEditor;
       if (!editor) {
         vscode3.window.showWarningMessage(
           "No active editor. Select code or hover a line first."
@@ -16745,27 +17339,55 @@ var CodeLensHoverProvider = class {
         return;
       }
       const selection = editor.selection;
-      const document = editor.document;
-      code = document.getText(selection).trim();
-      if (code.length === 0) {
-        const line = document.lineAt(selection.active.line);
-        code = line.text.trim();
-        const { context: ctx } = this.contextExtractor.extract(
-          document,
-          selection.active
+      const doc = editor.document;
+      document = doc;
+      resolvedCode = doc.getText(selection).trim();
+      if (resolvedCode.length === 0) {
+        position = selection.active;
+        const line = doc.lineAt(position.line);
+        resolvedCode = line.text.trim();
+        const extracted = this.contextExtractor.extract(
+          doc,
+          position,
+          DETAILED_LINE_RANGE
         );
-        context = ctx;
+        resolvedContext = extracted.context;
       } else {
-        context = context ?? "";
+        position = selection.start;
+        const extracted = this.contextExtractor.extract(
+          doc,
+          selection.active,
+          DETAILED_LINE_RANGE
+        );
+        resolvedContext = extracted.context;
+      }
+    } else {
+      resolvedCode = code;
+      if (document) {
+        const pos = this.findPositionForCode(document, code);
+        if (pos !== null) {
+          position = pos;
+          const extracted = this.contextExtractor.extract(
+            document,
+            pos,
+            DETAILED_LINE_RANGE
+          );
+          resolvedContext = extracted.context;
+        } else {
+          resolvedContext = context ?? "";
+        }
+      } else {
+        resolvedContext = context ?? "";
       }
     }
-    if (code.length === 0) {
+    if (resolvedCode.length === 0) {
       vscode3.window.showWarningMessage(
         "No code to explain. Select something or hover a line."
       );
       return;
     }
-    const lang = vscode3.window.activeTextEditor?.document.languageId ?? "plaintext";
+    const lang = document?.languageId ?? "plaintext";
+    const fileStructure = document != null ? this.getFileStructureSummary(document) : "";
     let explanation;
     try {
       explanation = await vscode3.window.withProgress(
@@ -16774,14 +17396,23 @@ var CodeLensHoverProvider = class {
           title: "CodeLens AI",
           cancellable: false
         },
-        async () => this.aiService.explain(code, lang, context)
+        async () => this.aiService.explain(
+          resolvedCode,
+          lang,
+          resolvedContext,
+          void 0,
+          {
+            detailLevel: "detailed",
+            fileStructure: fileStructure || void 0
+          }
+        )
       );
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       vscode3.window.showErrorMessage(`CodeLens AI: ${message}`);
       return;
     }
-    this.cacheService.set(code, explanation);
+    this.cacheService.set(resolvedCode, explanation);
     this.showExplanationPanel(explanation);
   }
   showExplanationPanel(explanation) {
@@ -16796,6 +17427,7 @@ var CodeLensHoverProvider = class {
     panel.webview.html = getExplanationHtml(escaped);
   }
   dispose() {
+    this.cancelPreviousHoverFetch();
     this.clearDecoration();
     this.decorationType?.dispose();
     this.decorationType = null;
@@ -17764,7 +18396,7 @@ var SidePanelProvider = class {
   view;
   history = [];
   disposables = [];
-  // Track current explanation being displayed
+  // Track current explanation being displayed with full context for refresh
   currentExplanation = null;
   resolveWebviewView(webviewView, _context, _token) {
     this.view = webviewView;
@@ -17851,7 +18483,9 @@ var SidePanelProvider = class {
     this.currentExplanation = {
       code,
       explanation: "",
-      isLoading: true
+      isLoading: true,
+      languageId,
+      context
     };
     this.updateView();
     let explanation = this.cacheService.get(code);
@@ -17866,7 +18500,9 @@ var SidePanelProvider = class {
     this.currentExplanation = {
       code,
       explanation,
-      isLoading: false
+      isLoading: false,
+      languageId,
+      context
     };
     const historyEntry = {
       id: this.generateId(),
@@ -17885,16 +18521,21 @@ var SidePanelProvider = class {
   }
   /**
    * Refreshes the current explanation by fetching again from AI.
+   * Uses stored languageId and context for accurate re-fetch.
    */
   async refreshExplanation() {
     if (!this.currentExplanation)
       return;
-    const code = this.currentExplanation.code;
-    this.cacheService.clear();
+    const { code, languageId, context } = this.currentExplanation;
+    this.cacheService.delete(code);
     this.currentExplanation.isLoading = true;
     this.updateView();
     try {
-      const explanation = await this.aiService.explain(code, "plaintext", "");
+      const explanation = await this.aiService.explain(
+        code,
+        languageId,
+        context
+      );
       this.cacheService.set(code, explanation);
       this.currentExplanation.explanation = explanation;
     } catch (err) {
@@ -17912,7 +18553,10 @@ var SidePanelProvider = class {
       this.currentExplanation = {
         code: entry.code,
         explanation: entry.explanation,
-        isLoading: false
+        isLoading: false,
+        languageId: entry.languageId,
+        context: ""
+        // History doesn't store context, but languageId is preserved
       };
       this.updateView();
     }
@@ -17924,7 +18568,9 @@ var SidePanelProvider = class {
     this.currentExplanation = {
       code: "",
       explanation: message,
-      isLoading: false
+      isLoading: false,
+      languageId: "plaintext",
+      context: ""
     };
     this.updateView();
   }
@@ -18496,6 +19142,11 @@ var FloatingPanelProvider = class {
 var PrototypeManager = class {
   constructor(context) {
     this.context = context;
+    void vscode10.commands.executeCommand(
+      "setContext",
+      "codelensAI.prototype.sidePanelEnabled",
+      true
+    );
     this.statusBarItem = vscode10.window.createStatusBarItem(
       vscode10.StatusBarAlignment.Right,
       99
@@ -19074,7 +19725,9 @@ function runExperiment(mode) {
       provider
     );
     experimentDisposables.push(disposable);
-    console.log(`[Experiment] Registered provider ${index + 1} for mode: ${mode}`);
+    console.log(
+      `[Experiment] Registered provider ${index + 1} for mode: ${mode}`
+    );
   });
   currentMode = mode;
   updateStatusBar();
@@ -19089,7 +19742,9 @@ function updateStatusBar() {
     statusBarItem.text = `$(beaker) Exp: ${currentMode}`;
     statusBarItem.tooltip = `Hover Experiment Mode: ${currentMode}
 Click to change or stop`;
-    statusBarItem.backgroundColor = new vscode12.ThemeColor("statusBarItem.warningBackground");
+    statusBarItem.backgroundColor = new vscode12.ThemeColor(
+      "statusBarItem.warningBackground"
+    );
   } else {
     statusBarItem.text = "$(beaker) No Experiment";
     statusBarItem.tooltip = "No hover experiment running. Click to start one.";
@@ -19163,7 +19818,9 @@ async function showExperimentMenu() {
     return;
   if (selection.label.includes("Stop Experiment")) {
     clearExperiments();
-    vscode12.window.showInformationMessage("\u{1F9EA} Experiment stopped. Only VS Code defaults active.");
+    vscode12.window.showInformationMessage(
+      "\u{1F9EA} Experiment stopped. Only VS Code defaults active."
+    );
     return;
   }
   const match = selection.label.match(/^(\d+[a-z]?)\./);
@@ -19259,11 +19916,27 @@ function activate(context) {
   sbm.show();
   const commandDisposable = vscode13.commands.registerCommand(
     "codelens-ai.explainCode",
-    (code, ctx) => {
-      void hoverProvider.explainCode(code, ctx);
+    (codeOrArgs, ctx) => {
+      let code;
+      let context2;
+      if (Array.isArray(codeOrArgs) && codeOrArgs.length >= 2 && typeof codeOrArgs[0] === "string") {
+        code = codeOrArgs[0];
+        context2 = typeof codeOrArgs[1] === "string" ? codeOrArgs[1] : "";
+      } else {
+        code = typeof codeOrArgs === "string" ? codeOrArgs : void 0;
+        context2 = ctx;
+      }
+      void hoverProvider.explainCode(code, context2);
     }
   );
   context.subscriptions.push(commandDisposable);
+  const retryHoverCommandDisposable = vscode13.commands.registerCommand(
+    "codelens-ai.retryHoverExplanation",
+    (code, context2) => {
+      hoverProvider.retryExplanation(code ?? "", context2 ?? "");
+    }
+  );
+  context.subscriptions.push(retryHoverCommandDisposable);
   const welcomeSubscription = vscode13.workspace.onDidOpenTextDocument(() => {
     if (sm.hasShownWelcome())
       return;
@@ -19329,13 +20002,16 @@ function activate(context) {
     "empty-content"
   ];
   const experimentRunCommands = experimentModes.map(
-    (mode) => vscode13.commands.registerCommand(`codelens-ai.experiment.run.${mode}`, () => {
-      if (!isExperimentsEnabled()) {
-        void vscode13.window.showInformationMessage(experimentDisabledMessage);
-        return;
+    (mode) => vscode13.commands.registerCommand(
+      `codelens-ai.experiment.run.${mode}`,
+      () => {
+        if (!isExperimentsEnabled()) {
+          void vscode13.window.showInformationMessage(experimentDisabledMessage);
+          return;
+        }
+        runExperiment(mode);
       }
-      runExperiment(mode);
-    })
+    )
   );
   context.subscriptions.push(
     experimentMenuCommand,
@@ -19345,7 +20021,7 @@ function activate(context) {
   );
   const prototypesEnabled = config.get(
     "prototype.enablePrototypes",
-    false
+    true
   );
   if (prototypesEnabled) {
     prototypeManager = new PrototypeManager(context);
