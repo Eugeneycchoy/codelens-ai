@@ -16926,6 +16926,7 @@ var CodeStructureDetector = class {
 // src/utils/contextExtractor.ts
 var vscode2 = __toESM(require("vscode"));
 var ContextExtractor = class {
+  structureDetector = new CodeStructureDetector();
   /**
    * Returns the trimmed line at position plus surrounding lines as context.
    * Context excludes the hovered line so the AI can distinguish "this line" from "around it".
@@ -16947,11 +16948,25 @@ var ContextExtractor = class {
     return { code, context };
   }
   /**
-   * Uses indentation to find the logical block containing the position
-   * (e.g. function body, loop body, class body) and returns its full text.
+   * Uses indentation or (when classification is provided) classification-based
+   * logic to find the block containing the position and returns its full text.
    */
-  extractBlock(document, position) {
-    const { start, end } = this.getBlockLineRange(document, position);
+  extractBlock(document, position, classification) {
+    if (document.lineCount === 0) {
+      return "";
+    }
+    if (classification === "simple") {
+      const lineIndex = Math.max(
+        0,
+        Math.min(position.line, document.lineCount - 1)
+      );
+      return document.lineAt(lineIndex).text.trimEnd();
+    }
+    const { start, end } = this.getBlockLineRange(
+      document,
+      position,
+      classification
+    );
     const lines = [];
     for (let i2 = start; i2 <= end; i2++) {
       lines.push(document.lineAt(i2).text);
@@ -16961,21 +16976,107 @@ var ContextExtractor = class {
   /**
    * Returns the range of the block containing the position (same logic as extractBlock).
    * Use for decorations; fall back to single-line range if the document is empty.
+   *
+   * When classification is provided:
+   * - 'structural' → full block range via language-aware detection
+   * - 'simple' → single-line range
+   * - 'unknown' or omitted → indentation heuristic (backward compatible)
    */
-  getBlockRange(document, position) {
+  getBlockRange(document, position, classification) {
     const lineCount = document.lineCount;
     if (lineCount === 0) {
       return new vscode2.Range(0, 0, 0, 0);
     }
-    const lineIndex = Math.min(position.line, lineCount - 1);
-    const { start, end } = this.getBlockLineRange(
-      document,
-      new vscode2.Position(lineIndex, 0)
-    );
+    const lineIndex = Math.max(0, Math.min(position.line, lineCount - 1));
+    const pos = new vscode2.Position(lineIndex, 0);
+    if (classification === "simple") {
+      const line = document.lineAt(lineIndex);
+      return new vscode2.Range(lineIndex, 0, lineIndex, line.text.length);
+    }
+    const { start, end } = classification === "structural" ? this.getStructuralBlockLineRange(document, pos) : this.getBlockLineRange(document, pos, classification);
     const endLine = document.lineAt(end);
     return new vscode2.Range(start, 0, end, endLine.text.length);
   }
-  getBlockLineRange(document, position) {
+  /**
+   * Language-aware block range for structural elements (function, class, if, etc.).
+   * Falls back to indentation heuristic when no structural start is found or language is unsupported.
+   */
+  getStructuralBlockLineRange(document, position) {
+    const lineIndex = position.line;
+    const lineCount = document.lineCount;
+    if (lineCount === 0 || lineIndex < 0 || lineIndex >= lineCount) {
+      return { start: 0, end: 0 };
+    }
+    const patterns = this.structureDetector.getLanguagePatterns(
+      document.languageId
+    );
+    const structuralPatterns = [];
+    for (const key of Object.keys(patterns.structural)) {
+      const re2 = patterns.structural[key];
+      if (re2 instanceof RegExp)
+        structuralPatterns.push(re2);
+    }
+    if (patterns.classification?.structural) {
+      structuralPatterns.push(...patterns.classification.structural);
+    }
+    const currentLineText = document.lineAt(lineIndex).text;
+    const currentIndent = this.getIndentation(currentLineText);
+    const effectiveIndent = currentLineText.trim().length > 0 ? currentIndent : this.getIndentationFromNeighbor(document, lineIndex, lineCount);
+    let blockStart = null;
+    for (let i2 = lineIndex; i2 >= 0; i2--) {
+      const line = document.lineAt(i2).text;
+      if (line.trim().length === 0)
+        continue;
+      const indent = this.getIndentation(line);
+      if (indent > effectiveIndent)
+        continue;
+      const matches = structuralPatterns.some((re2) => re2.test(line));
+      if (matches) {
+        blockStart = i2;
+        break;
+      }
+    }
+    if (blockStart === null) {
+      return this.getBlockLineRangeIndent(document, position);
+    }
+    const startLineText = document.lineAt(blockStart).text;
+    const blockStartIndent = this.getIndentation(startLineText);
+    let blockEnd = blockStart;
+    for (let i2 = blockStart + 1; i2 < lineCount; i2++) {
+      const line = document.lineAt(i2).text;
+      if (line.trim().length === 0) {
+        blockEnd = i2;
+        continue;
+      }
+      const indent = this.getIndentation(line);
+      if (indent <= blockStartIndent) {
+        break;
+      }
+      blockEnd = i2;
+    }
+    return { start: blockStart, end: blockEnd };
+  }
+  /** Indentation of the nearest non-blank line above or below; used when position is on a blank line. */
+  getIndentationFromNeighbor(document, lineIndex, lineCount) {
+    for (let i2 = lineIndex - 1; i2 >= 0; i2--) {
+      const t2 = document.lineAt(i2).text;
+      if (t2.trim().length > 0)
+        return this.getIndentation(t2);
+    }
+    for (let i2 = lineIndex + 1; i2 < lineCount; i2++) {
+      const t2 = document.lineAt(i2).text;
+      if (t2.trim().length > 0)
+        return this.getIndentation(t2);
+    }
+    return 0;
+  }
+  getBlockLineRange(document, position, classification) {
+    if (classification === "structural") {
+      return this.getStructuralBlockLineRange(document, position);
+    }
+    return this.getBlockLineRangeIndent(document, position);
+  }
+  getBlockLineRangeIndent(document, position) {
     const lineIndex = position.line;
     const lineCount = document.lineCount;
     const currentLine = document.lineAt(lineIndex).text;
@@ -17003,10 +17104,6 @@ var ContextExtractor = class {
         break;
       }
       blockEnd = i2;
-    }
-    const maxBlockLines = 20;
-    if (blockEnd - blockStart > maxBlockLines) {
-      blockEnd = blockStart + maxBlockLines;
     }
     return { start: blockStart, end: blockEnd };
   }
@@ -17107,6 +17204,22 @@ var CodeLensHoverProvider = class {
     this.lastDecoratedRange = range;
     editor.setDecorations(this.decorationType, [range]);
   }
+  /**
+   * Computes the highlight range from classification: structural → full block,
+   * simple → single line, unknown → indentation-based block (handled by getBlockRange).
+   * Caller should pass the same classification used for extraction so highlight and explanation match.
+   */
+  getHighlightRange(document, position, classification) {
+    try {
+      return this.contextExtractor.getBlockRange(
+        document,
+        position,
+        classification
+      );
+    } catch {
+      return document.lineAt(position.line).range;
+    }
+  }
   provideHover(document, position, _token) {
     this.cancelPreviousHoverFetch();
     if (this.detector.isComment(document, position))
@@ -17117,22 +17230,29 @@ var CodeLensHoverProvider = class {
       if (!this.detector.isEmptyLineInBlock(document, position))
         return null;
     }
+    const highlightPosition = isEmptyLine ? new vscode3.Position(
+      this.getPreviousNonBlankLine(document, position.line),
+      0
+    ) : position;
+    const classification = this.detector.classify(document, highlightPosition);
     let code;
     let context;
-    if (isEmptyLine) {
-      const prevNonBlankLine = this.getPreviousNonBlankLine(
+    if (classification === "structural") {
+      code = this.contextExtractor.extractBlock(
         document,
-        position.line
+        highlightPosition,
+        classification
       );
-      const blockPosition = new vscode3.Position(prevNonBlankLine, 0);
-      code = this.contextExtractor.extractBlock(document, blockPosition);
-      const { context: ctx } = this.contextExtractor.extract(
+      const extracted = this.contextExtractor.extract(
         document,
-        position
+        highlightPosition
       );
-      context = ctx;
+      context = extracted.context;
     } else {
-      const extracted = this.contextExtractor.extract(document, position);
+      const extracted = this.contextExtractor.extract(
+        document,
+        highlightPosition
+      );
       code = extracted.code;
       context = extracted.context;
     }
@@ -17143,28 +17263,11 @@ var CodeLensHoverProvider = class {
     if (cached !== null) {
       const editor2 = vscode3.window.visibleTextEditors.find((e2) => e2.document === document) ?? (vscode3.window.activeTextEditor?.document === document ? vscode3.window.activeTextEditor : void 0);
       if (editor2) {
-        const highlightPosition2 = isEmptyLine ? new vscode3.Position(
-          this.getPreviousNonBlankLine(document, position.line),
-          0
-        ) : position;
-        let highlightRange2;
-        try {
-          const blockText = this.contextExtractor.extractBlock(
-            document,
-            highlightPosition2
-          );
-          const blockLineCount = blockText.split("\n").length;
-          if (blockText.trim().length === 0 || blockLineCount > 15) {
-            highlightRange2 = document.lineAt(position.line).range;
-          } else {
-            highlightRange2 = this.contextExtractor.getBlockRange(
-              document,
-              highlightPosition2
-            );
-          }
-        } catch {
-          highlightRange2 = document.lineAt(position.line).range;
-        }
+        const highlightRange2 = this.getHighlightRange(
+          document,
+          highlightPosition,
+          classification
+        );
         this.applyDecoration(editor2, highlightRange2);
       }
       return new vscode3.Hover(
@@ -17172,28 +17275,11 @@ var CodeLensHoverProvider = class {
         range
       );
     }
-    const highlightPosition = isEmptyLine ? new vscode3.Position(
-      this.getPreviousNonBlankLine(document, position.line),
-      0
-    ) : position;
-    let highlightRange;
-    try {
-      const blockText = this.contextExtractor.extractBlock(
-        document,
-        highlightPosition
-      );
-      const blockLineCount = blockText.split("\n").length;
-      if (blockText.trim().length === 0 || blockLineCount > 15) {
-        highlightRange = document.lineAt(position.line).range;
-      } else {
-        highlightRange = this.contextExtractor.getBlockRange(
-          document,
-          highlightPosition
-        );
-      }
-    } catch {
-      highlightRange = document.lineAt(position.line).range;
-    }
+    const highlightRange = this.getHighlightRange(
+      document,
+      highlightPosition,
+      classification
+    );
     const editor = vscode3.window.visibleTextEditors.find((e2) => e2.document === document) ?? (vscode3.window.activeTextEditor?.document === document ? vscode3.window.activeTextEditor : void 0);
     if (editor) {
       this.applyDecoration(editor, highlightRange);
@@ -17283,7 +17369,9 @@ var CodeLensHoverProvider = class {
    * Uses CodeStructureDetector patterns so the model can relate the code to the file layout.
    */
   getFileStructureSummary(document) {
-    const patterns = this.detector.getLanguagePatterns(document.languageId).structural;
+    const patterns = this.detector.getLanguagePatterns(
+      document.languageId
+    ).structural;
     const outlineLines = [];
     const keys = [
       "class",
@@ -17374,7 +17462,13 @@ var CodeLensHoverProvider = class {
           );
           resolvedContext = extracted.context;
         } else {
-          resolvedContext = context ?? "";
+          const fallbackPos = new vscode3.Position(0, 0);
+          const extracted = this.contextExtractor.extract(
+            document,
+            fallbackPos,
+            DETAILED_LINE_RANGE
+          );
+          resolvedContext = extracted.context;
         }
       } else {
         resolvedContext = context ?? "";
@@ -17412,7 +17506,6 @@ var CodeLensHoverProvider = class {
       vscode3.window.showErrorMessage(`CodeLens AI: ${message}`);
       return;
     }
-    this.cacheService.set(resolvedCode, explanation);
     this.showExplanationPanel(explanation);
   }
   showExplanationPanel(explanation) {
