@@ -47,6 +47,39 @@ export class ContextExtractor {
     document: vscode.TextDocument,
     position: vscode.Position,
   ): string {
+    const { start, end } = this.getBlockLineRange(document, position);
+    const lines: string[] = [];
+    for (let i = start; i <= end; i++) {
+      lines.push(document.lineAt(i).text);
+    }
+    return lines.join("\n");
+  }
+
+  /**
+   * Returns the range of the block containing the position (same logic as extractBlock).
+   * Use for decorations; fall back to single-line range if the document is empty.
+   */
+  getBlockRange(
+    document: vscode.TextDocument,
+    position: vscode.Position,
+  ): vscode.Range {
+    const lineCount = document.lineCount;
+    if (lineCount === 0) {
+      return new vscode.Range(0, 0, 0, 0);
+    }
+    const lineIndex = Math.min(position.line, lineCount - 1);
+    const { start, end } = this.getBlockLineRange(
+      document,
+      new vscode.Position(lineIndex, 0),
+    );
+    const endLine = document.lineAt(end);
+    return new vscode.Range(start, 0, end, endLine.text.length);
+  }
+
+  private getBlockLineRange(
+    document: vscode.TextDocument,
+    position: vscode.Position,
+  ): { start: number; end: number } {
     const lineIndex = position.line;
     const lineCount = document.lineCount;
     const currentLine = document.lineAt(lineIndex).text;
@@ -77,11 +110,11 @@ export class ContextExtractor {
       blockEnd = i;
     }
 
-    const lines: string[] = [];
-    for (let i = blockStart; i <= blockEnd; i++) {
-      lines.push(document.lineAt(i).text);
+    const maxBlockLines = 20;
+    if (blockEnd - blockStart > maxBlockLines) {
+      blockEnd = blockStart + maxBlockLines;
     }
-    return lines.join("\n");
+    return { start: blockStart, end: blockEnd };
   }
 
   /** Returns the number of leading whitespace characters (spaces or tabs). */

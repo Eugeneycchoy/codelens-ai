@@ -75,6 +75,11 @@
           "type": "string",
           "default": "gpt-4o-mini",
           "description": "Model name to use for explanations."
+        },
+        "codelensAI.highlightColor": {
+          "type": "string",
+          "default": "",
+          "description": "Background color for the hover-highlighted code block (e.g. \"rgba(0, 128, 128, 0.2)\"). Leave empty to use theme-aware defaults (dark: teal 15%, light: teal 25%, high-contrast: white 10%)."
         }
       }
     }

@@ -6435,7 +6435,7 @@ var require_abort_controller = __commonJS({
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     var eventTargetShim = require_event_target_shim();
-    var AbortSignal = class extends eventTargetShim.EventTarget {
+    var AbortSignal2 = class extends eventTargetShim.EventTarget {
       /**
        * AbortSignal cannot be constructed directly.
        */
@@ -6454,9 +6454,9 @@ var require_abort_controller = __commonJS({
         return aborted;
       }
     };
-    eventTargetShim.defineEventAttribute(AbortSignal.prototype, "abort");
+    eventTargetShim.defineEventAttribute(AbortSignal2.prototype, "abort");
     function createAbortSignal() {
-      const signal = Object.create(AbortSignal.prototype);
+      const signal = Object.create(AbortSignal2.prototype);
       eventTargetShim.EventTarget.call(signal);
       abortedFlags.set(signal, false);
       return signal;
@@ -6469,11 +6469,11 @@ var require_abort_controller = __commonJS({
       signal.dispatchEvent({ type: "abort" });
     }
     var abortedFlags = /* @__PURE__ */ new WeakMap();
-    Object.defineProperties(AbortSignal.prototype, {
+    Object.defineProperties(AbortSignal2.prototype, {
       aborted: { enumerable: true }
     });
     if (typeof Symbol === "function" && typeof Symbol.toStringTag === "symbol") {
-      Object.defineProperty(AbortSignal.prototype, Symbol.toStringTag, {
+      Object.defineProperty(AbortSignal2.prototype, Symbol.toStringTag, {
         configurable: true,
         value: "AbortSignal"
       });
@@ -6517,11 +6517,11 @@ var require_abort_controller = __commonJS({
       });
     }
     exports2.AbortController = AbortController2;
-    exports2.AbortSignal = AbortSignal;
+    exports2.AbortSignal = AbortSignal2;
     exports2.default = AbortController2;
     module2.exports = AbortController2;
     module2.exports.AbortController = module2.exports["default"] = AbortController2;
-    module2.exports.AbortSignal = AbortSignal;
+    module2.exports.AbortSignal = AbortSignal2;
   }
 });
 
@@ -6661,10 +6661,10 @@ __export(extension_exports, {
   deactivate: () => deactivate
 });
 module.exports = __toCommonJS(extension_exports);
-var vscode6 = __toESM(require("vscode"));
+var vscode7 = __toESM(require("vscode"));
 
 // src/providers/hoverProvider.ts
-var vscode2 = __toESM(require("vscode"));
+var vscode3 = __toESM(require("vscode"));
 
 // src/services/aiService.ts
 var vscode = __toESM(require("vscode"));
@@ -16229,6 +16229,15 @@ var { AnthropicError: AnthropicError2, APIError: APIError3, APIConnectionError: 
 var sdk_default = Anthropic;
 
 // src/services/aiService.ts
+function cancellationTokenToAbortSignal(token) {
+  if (!token)
+    return void 0;
+  if (token.isCancellationRequested)
+    return AbortSignal.abort();
+  const controller = new AbortController();
+  token.onCancellationRequested(() => controller.abort());
+  return controller.signal;
+}
 var AIService = class {
   getConfig() {
     const config = vscode.workspace.getConfiguration("codelensAI");
@@ -16243,36 +16252,59 @@ var AIService = class {
   /**
    * Request an explanation for the given code. Routes to the configured provider.
    * Returns a user-friendly error message on failure instead of throwing.
+   * Optional cancellationToken aborts the request when cancelled (e.g. hover dismissed).
    */
-  async explain(code, lang, context) {
+  async explain(code, lang, context, cancellationToken) {
     const cfg = this.getConfig();
     if ((cfg.provider === "openai" || cfg.provider === "anthropic") && !cfg.apiKey) {
       const apiKeyHint = cfg.apiBase ? "Please set `codelensAI.apiKey` and verify `codelensAI.apiBase` in settings for the selected provider." : "Please set `codelensAI.apiKey` in settings for the selected provider.";
       return apiKeyHint;
     }
     const prompt = this.buildPrompt(code, lang, context);
+    const signal = cancellationTokenToAbortSignal(cancellationToken);
     try {
       switch (cfg.provider) {
         case "openai":
-          return await this.callOpenAI(prompt, cfg.model, cfg.apiKey);
+          return await this.callOpenAI(prompt, cfg.model, cfg.apiKey, signal);
         case "anthropic":
           return await this.callAnthropic(
             prompt,
             cfg.model,
             cfg.apiKey,
-            cfg.apiBase
+            cfg.apiBase,
+            signal
           );
         case "ollama":
-          return await this.callOllama(prompt, cfg.model, cfg.ollamaEndpoint);
+          return await this.callOllama(
+            prompt,
+            cfg.model,
+            cfg.ollamaEndpoint,
+            signal
+          );
         default:
           return `Unknown provider: ${cfg.provider}. Use openai, anthropic, or ollama.`;
       }
     } catch (err) {
+      if (this.isAbortError(err)) {
+        return "Request was cancelled.";
+      }
       const hasApiBase = cfg.provider === "anthropic" && Boolean(cfg.apiBase?.trim());
       const message = this.analyzeError(err, hasApiBase);
       console.error("[CodeLens AI]", err);
       return message;
     }
+  }
+  isAbortError(error) {
+    if (error instanceof Error) {
+      if (error.name === "AbortError")
+        return true;
+      if (error.message?.toLowerCase().includes("aborted"))
+        return true;
+    }
+    if (typeof error === "object" && error !== null && "name" in error && error.name === "AbortError") {
+      return true;
+    }
+    return false;
   }
   /**
    * Classifies the error and returns a user-friendly message using
@@ -16349,28 +16381,34 @@ Now explain this ${lang} code:
 ${code}
 \`\`\`${contextBlock}`;
   }
-  async callOpenAI(prompt, model, apiKey) {
+  async callOpenAI(prompt, model, apiKey, signal) {
     const client = new openai_default({ apiKey });
-    const completion = await client.chat.completions.create({
-      model,
-      messages: [{ role: "user", content: prompt }]
-    });
+    const completion = await client.chat.completions.create(
+      {
+        model,
+        messages: [{ role: "user", content: prompt }]
+      },
+      { signal: signal ?? void 0 }
+    );
     const content = completion.choices[0]?.message?.content;
     if (content == null || content === "") {
       return "No explanation was returned from the provider.";
     }
     return content.trim();
   }
-  async callAnthropic(prompt, model, apiKey, apiBase) {
+  async callAnthropic(prompt, model, apiKey, apiBase, signal) {
     const client = new sdk_default({
       apiKey,
       ...apiBase ? { baseURL: apiBase } : {}
     });
-    const message = await client.messages.create({
-      model,
-      max_tokens: 1024,
-      messages: [{ role: "user", content: prompt }]
-    });
+    const message = await client.messages.create(
+      {
+        model,
+        max_tokens: 1024,
+        messages: [{ role: "user", content: prompt }]
+      },
+      { signal: signal ?? void 0 }
+    );
     for (const block of message.content) {
       if (block.type === "text" && "text" in block && typeof block.text === "string") {
         return block.text.trim();
@@ -16378,13 +16416,14 @@ ${code}
     }
     return "No explanation was returned from the provider.";
   }
-  async callOllama(prompt, model, endpoint) {
+  async callOllama(prompt, model, endpoint, signal) {
     const base = endpoint.replace(/\/$/, "");
     const url = `${base}/api/generate`;
     const res = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ model, prompt, stream: false })
+      body: JSON.stringify({ model, prompt, stream: false }),
+      signal: signal ?? void 0
     });
     if (!res.ok) {
       const body = await res.text();
@@ -16441,6 +16480,7 @@ var CacheService = class {
 };
 
 // src/utils/contextExtractor.ts
+var vscode2 = __toESM(require("vscode"));
 var ContextExtractor = class {
   /**
    * Returns the trimmed line at position plus surrounding lines as context.
@@ -16467,6 +16507,31 @@ var ContextExtractor = class {
    * (e.g. function body, loop body, class body) and returns its full text.
    */
   extractBlock(document, position) {
+    const { start, end } = this.getBlockLineRange(document, position);
+    const lines = [];
+    for (let i2 = start; i2 <= end; i2++) {
+      lines.push(document.lineAt(i2).text);
+    }
+    return lines.join("\n");
+  }
+  /**
+   * Returns the range of the block containing the position (same logic as extractBlock).
+   * Use for decorations; fall back to single-line range if the document is empty.
+   */
+  getBlockRange(document, position) {
+    const lineCount = document.lineCount;
+    if (lineCount === 0) {
+      return new vscode2.Range(0, 0, 0, 0);
+    }
+    const lineIndex = Math.min(position.line, lineCount - 1);
+    const { start, end } = this.getBlockLineRange(
+      document,
+      new vscode2.Position(lineIndex, 0)
+    );
+    const endLine = document.lineAt(end);
+    return new vscode2.Range(start, 0, end, endLine.text.length);
+  }
+  getBlockLineRange(document, position) {
     const lineIndex = position.line;
     const lineCount = document.lineCount;
     const currentLine = document.lineAt(lineIndex).text;
@@ -16495,11 +16560,11 @@ var ContextExtractor = class {
       }
       blockEnd = i2;
     }
-    const lines = [];
-    for (let i2 = blockStart; i2 <= blockEnd; i2++) {
-      lines.push(document.lineAt(i2).text);
+    const maxBlockLines = 20;
+    if (blockEnd - blockStart > maxBlockLines) {
+      blockEnd = blockStart + maxBlockLines;
     }
-    return lines.join("\n");
+    return { start: blockStart, end: blockEnd };
   }
   /** Returns the number of leading whitespace characters (spaces or tabs). */
   getIndentation(line) {
@@ -16516,11 +16581,77 @@ var ContextExtractor = class {
 
 // src/providers/hoverProvider.ts
 var LOADING_MESSAGE = "\u23F3 Loading explanation\u2026";
+var THEME_HIGHLIGHT = {
+  dark: "rgba(0, 128, 128, 0.15)",
+  light: "rgba(0, 128, 128, 0.25)",
+  highContrast: "rgba(255, 255, 255, 0.1)"
+};
 var CodeLensHoverProvider = class {
   aiService = new AIService();
   cacheService = new CacheService();
   contextExtractor = new ContextExtractor();
   isProcessing = false;
+  decorationType = null;
+  lastDecoratedEditor = null;
+  lastDecoratedRange = null;
+  selectionListener = null;
+  configListener = null;
+  themeListener = null;
+  constructor() {
+    this.updateDecorationType();
+    this.selectionListener = vscode3.window.onDidChangeTextEditorSelection(
+      (e2) => {
+        if (!this.lastDecoratedRange || e2.textEditor !== this.lastDecoratedEditor)
+          return;
+        const line = e2.selections[0]?.active.line ?? 0;
+        if (line < this.lastDecoratedRange.start.line || line > this.lastDecoratedRange.end.line) {
+          this.clearDecoration();
+        }
+      }
+    );
+    this.configListener = vscode3.workspace.onDidChangeConfiguration((e2) => {
+      if (e2.affectsConfiguration("codelensAI.highlightColor"))
+        this.updateDecorationType();
+    });
+    this.themeListener = vscode3.window.onDidChangeActiveColorTheme(
+      () => this.updateDecorationType()
+    );
+  }
+  getHighlightColor() {
+    const custom = vscode3.workspace.getConfiguration("codelensAI").get("highlightColor");
+    if (custom && custom.trim().length > 0)
+      return custom.trim();
+    const kind3 = vscode3.window.activeColorTheme.kind;
+    if (kind3 === vscode3.ColorThemeKind.HighContrast)
+      return THEME_HIGHLIGHT.highContrast;
+    if (kind3 === vscode3.ColorThemeKind.Light)
+      return THEME_HIGHLIGHT.light;
+    return THEME_HIGHLIGHT.dark;
+  }
+  updateDecorationType() {
+    if (this.decorationType) {
+      this.decorationType.dispose();
+      this.decorationType = null;
+    }
+    this.decorationType = vscode3.window.createTextEditorDecorationType({
+      backgroundColor: this.getHighlightColor()
+    });
+  }
+  clearDecoration() {
+    if (this.lastDecoratedEditor && this.decorationType) {
+      this.lastDecoratedEditor.setDecorations(this.decorationType, []);
+    }
+    this.lastDecoratedEditor = null;
+    this.lastDecoratedRange = null;
+  }
+  applyDecoration(editor, range) {
+    this.clearDecoration();
+    if (!this.decorationType)
+      return;
+    this.lastDecoratedEditor = editor;
+    this.lastDecoratedRange = range;
+    editor.setDecorations(this.decorationType, [range]);
+  }
   provideHover(document, position, _token) {
     const lineText = document.lineAt(position.line).text;
     if (lineText.trim().length === 0)
@@ -16530,38 +16661,67 @@ var CodeLensHoverProvider = class {
     const { code, context } = this.contextExtractor.extract(document, position);
     if (code.length === 0)
       return null;
-    const cached = this.cacheService.get(code);
-    if (cached !== null) {
-      const range2 = document.lineAt(position.line).range;
-      return new vscode2.Hover(
-        this.createHoverContent(cached, code, context),
-        range2
-      );
+    let highlightRange;
+    try {
+      const blockText = this.contextExtractor.extractBlock(document, position);
+      const blockLineCount = blockText.split("\n").length;
+      if (blockText.trim().length === 0 || blockLineCount > 15) {
+        highlightRange = document.lineAt(position.line).range;
+      } else {
+        highlightRange = this.contextExtractor.getBlockRange(
+          document,
+          position
+        );
+      }
+    } catch {
+      highlightRange = document.lineAt(position.line).range;
+    }
+    const editor = vscode3.window.visibleTextEditors.find((e2) => e2.document === document) ?? (vscode3.window.activeTextEditor?.document === document ? vscode3.window.activeTextEditor : void 0);
+    if (editor) {
+      this.applyDecoration(editor, highlightRange);
     }
     const range = document.lineAt(position.line).range;
-    void this.fetchExplanation(document, position, code, context);
-    return new vscode2.Hover(
+    const cached = this.cacheService.get(code);
+    if (cached !== null) {
+      return new vscode3.Hover(
+        this.createHoverContent(cached, code, context),
+        range
+      );
+    }
+    void this.fetchExplanation(document, position, code, context, _token);
+    return new vscode3.Hover(
       this.createHoverContent(LOADING_MESSAGE, code, context),
       range
     );
   }
   /**
    * Fetches explanation from AI, caches it, and avoids overlapping requests.
+   * Passes cancellation token so the request is aborted when hover is dismissed.
    */
-  async fetchExplanation(document, position, code, context) {
+  async fetchExplanation(document, position, code, context, token) {
     this.isProcessing = true;
     try {
       const lang = document.languageId || "plaintext";
-      const explanation = await this.aiService.explain(code, lang, context);
+      const explanation = await this.aiService.explain(
+        code,
+        lang,
+        context,
+        token
+      );
       this.cacheService.set(code, explanation);
     } catch (err) {
       console.error("[CodeLens AI] fetchExplanation failed", err);
+      const message = err instanceof Error ? err.message : String(err);
+      this.cacheService.set(
+        code,
+        `Something went wrong: ${message}. Try again or check the output panel for details.`
+      );
     } finally {
       this.isProcessing = false;
     }
   }
   createHoverContent(explanation, code, context) {
-    const md = new vscode2.MarkdownString(void 0, true);
+    const md = new vscode3.MarkdownString(void 0, true);
     md.isTrusted = true;
     md.appendMarkdown("### \u{1F9E0} CodeLens AI\n\n");
     md.appendMarkdown(explanation);
@@ -16576,9 +16736,9 @@ var CodeLensHoverProvider = class {
    */
   async explainCode(code, context) {
     if (code === void 0 || code === "") {
-      const editor = vscode2.window.activeTextEditor;
+      const editor = vscode3.window.activeTextEditor;
       if (!editor) {
-        vscode2.window.showWarningMessage(
+        vscode3.window.showWarningMessage(
           "No active editor. Select code or hover a line first."
         );
         return;
@@ -16599,17 +16759,17 @@ var CodeLensHoverProvider = class {
       }
     }
     if (code.length === 0) {
-      vscode2.window.showWarningMessage(
+      vscode3.window.showWarningMessage(
         "No code to explain. Select something or hover a line."
       );
       return;
     }
-    const lang = vscode2.window.activeTextEditor?.document.languageId ?? "plaintext";
+    const lang = vscode3.window.activeTextEditor?.document.languageId ?? "plaintext";
     let explanation;
     try {
-      explanation = await vscode2.window.withProgress(
+      explanation = await vscode3.window.withProgress(
         {
-          location: vscode2.ProgressLocation.Notification,
+          location: vscode3.ProgressLocation.Notification,
           title: "CodeLens AI",
           cancellable: false
         },
@@ -16617,7 +16777,7 @@ var CodeLensHoverProvider = class {
       );
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      vscode2.window.showErrorMessage(`CodeLens AI: ${message}`);
+      vscode3.window.showErrorMessage(`CodeLens AI: ${message}`);
       return;
     }
     this.cacheService.set(code, explanation);
@@ -16625,14 +16785,25 @@ var CodeLensHoverProvider = class {
   }
   showExplanationPanel(explanation) {
     const title = "CodeLens AI: Explanation";
-    const panel = vscode2.window.createWebviewPanel(
+    const panel = vscode3.window.createWebviewPanel(
       "codelensAiExplain",
       title,
-      vscode2.ViewColumn.Beside,
+      vscode3.ViewColumn.Beside,
       { enableScripts: false }
     );
     const escaped = escapeHtml(explanation);
     panel.webview.html = getExplanationHtml(escaped);
+  }
+  dispose() {
+    this.clearDecoration();
+    this.decorationType?.dispose();
+    this.decorationType = null;
+    this.selectionListener?.dispose();
+    this.selectionListener = null;
+    this.configListener?.dispose();
+    this.configListener = null;
+    this.themeListener?.dispose();
+    this.themeListener = null;
   }
 };
 function escapeHtml(text) {
@@ -16665,7 +16836,7 @@ function getExplanationHtml(body) {
 }
 
 // src/managers/stateManager.ts
-var vscode3 = __toESM(require("vscode"));
+var vscode4 = __toESM(require("vscode"));
 var ENABLED_KEY = "codelensAI.enabled";
 var StateManager = class {
   constructor(context) {
@@ -16674,7 +16845,7 @@ var StateManager = class {
     this._enabled = stored ?? true;
   }
   _enabled;
-  _onDidChangeEnabled = new vscode3.EventEmitter();
+  _onDidChangeEnabled = new vscode4.EventEmitter();
   onDidChangeEnabled = this._onDidChangeEnabled.event;
   getEnabled() {
     return this._enabled;
@@ -16692,7 +16863,7 @@ var StateManager = class {
 };
 
 // src/managers/menuManager.ts
-var vscode4 = __toESM(require("vscode"));
+var vscode5 = __toESM(require("vscode"));
 var CONFIG_NS = "codelensAI";
 var ACTION_PREFIX = "action:";
 var DEFAULT_MODELS = {
@@ -16712,7 +16883,7 @@ var MenuManager = class {
   constructor(stateManager2, context) {
     this.stateManager = stateManager2;
     this.context = context;
-    this.configWatcherDisposable = vscode4.workspace.onDidChangeConfiguration(
+    this.configWatcherDisposable = vscode5.workspace.onDidChangeConfiguration(
       (e2) => {
         if (e2.affectsConfiguration("codelensAI") && this.quickPick?.visible) {
           this.quickPick.items = this.buildItems();
@@ -16725,7 +16896,7 @@ var MenuManager = class {
   submenuQuickPick;
   configWatcherDisposable;
   getConfig() {
-    const config = vscode4.workspace.getConfiguration(CONFIG_NS);
+    const config = vscode5.workspace.getConfiguration(CONFIG_NS);
     return {
       provider: config.get("provider") ?? "openai",
       apiKey: config.get("apiKey") ?? "",
@@ -16758,7 +16929,7 @@ var MenuManager = class {
     return [
       {
         label: "Control",
-        kind: vscode4.QuickPickItemKind.Separator
+        kind: vscode5.QuickPickItemKind.Separator
       },
       {
         label: toggleLabel,
@@ -16768,7 +16939,7 @@ var MenuManager = class {
       },
       {
         label: "Configuration",
-        kind: vscode4.QuickPickItemKind.Separator
+        kind: vscode5.QuickPickItemKind.Separator
       },
       {
         label: "$(key) Change provider",
@@ -16797,7 +16968,7 @@ var MenuManager = class {
     if (action === "toggle") {
       await this.stateManager.setEnabled(!this.stateManager.getEnabled());
     } else if (action === "openSettings") {
-      await vscode4.commands.executeCommand(
+      await vscode5.commands.executeCommand(
         "workbench.action.openSettings",
         CONFIG_NS
       );
@@ -16841,7 +17012,7 @@ var MenuManager = class {
       detail: p2.id
     }));
     if (!this.submenuQuickPick) {
-      this.submenuQuickPick = vscode4.window.createQuickPick();
+      this.submenuQuickPick = vscode5.window.createQuickPick();
       this.submenuQuickPick.canSelectMany = false;
       this.submenuQuickPick.onDidHide(() => {
         this.submenuQuickPick.selectedItems = [];
@@ -16858,8 +17029,8 @@ var MenuManager = class {
       if (!selected?.detail)
         return;
       const provider = selected.detail;
-      const configTarget = vscode4.ConfigurationTarget.Global;
-      const c2 = vscode4.workspace.getConfiguration(CONFIG_NS);
+      const configTarget = vscode5.ConfigurationTarget.Global;
+      const c2 = vscode5.workspace.getConfiguration(CONFIG_NS);
       void c2.update("provider", provider, configTarget);
       void c2.update("model", DEFAULT_MODELS[provider], configTarget);
       this.submenuQuickPick.hide();
@@ -16882,7 +17053,7 @@ var MenuManager = class {
       detail: model
     }));
     if (!this.submenuQuickPick) {
-      this.submenuQuickPick = vscode4.window.createQuickPick();
+      this.submenuQuickPick = vscode5.window.createQuickPick();
       this.submenuQuickPick.canSelectMany = false;
       this.submenuQuickPick.onDidHide(() => {
         this.submenuQuickPick.selectedItems = [];
@@ -16899,8 +17070,8 @@ var MenuManager = class {
       if (!selected?.detail)
         return;
       const model = selected.detail;
-      const configTarget = vscode4.ConfigurationTarget.Global;
-      void vscode4.workspace.getConfiguration(CONFIG_NS).update("model", model, configTarget);
+      const configTarget = vscode5.ConfigurationTarget.Global;
+      void vscode5.workspace.getConfiguration(CONFIG_NS).update("model", model, configTarget);
       this.submenuQuickPick.hide();
     });
     const hideDisposable = this.submenuQuickPick.onDidHide(() => {
@@ -16916,7 +17087,7 @@ var MenuManager = class {
    */
   showMainMenu() {
     if (!this.quickPick) {
-      this.quickPick = vscode4.window.createQuickPick();
+      this.quickPick = vscode5.window.createQuickPick();
       this.quickPick.title = "CodeLens AI";
       this.quickPick.placeholder = "Choose an action (multiple allowed)";
       this.quickPick.matchOnDescription = true;
@@ -16961,7 +17132,7 @@ var MenuManager = class {
 };
 
 // src/managers/statusBarManager.ts
-var vscode5 = __toESM(require("vscode"));
+var vscode6 = __toESM(require("vscode"));
 var STATUS_BAR_PRIORITY = 100;
 var TOOLTIP_ENABLED = "CodeLens AI - Click to configure";
 var TOOLTIP_DISABLED = "CodeLens AI (disabled) - Click to enable";
@@ -16969,8 +17140,8 @@ var StatusBarManager = class {
   constructor(stateManager2, menuManager2) {
     this.stateManager = stateManager2;
     this.menuManager = menuManager2;
-    this.statusBarItem = vscode5.window.createStatusBarItem(
-      vscode5.StatusBarAlignment.Right,
+    this.statusBarItem = vscode6.window.createStatusBarItem(
+      vscode6.StatusBarAlignment.Right,
       STATUS_BAR_PRIORITY
     );
     this.updateIcon(this.stateManager.getEnabled());
@@ -16987,7 +17158,7 @@ var StatusBarManager = class {
    * Returns a disposable that unregisters the command.
    */
   registerClickHandler(context) {
-    const disposable = vscode5.commands.registerCommand(
+    const disposable = vscode6.commands.registerCommand(
       "codelens-ai.statusBarClick",
       () => {
         this.menuManager.showMainMenu();
@@ -17031,9 +17202,12 @@ function activate(context) {
   stateManager = sm;
   menuManager = mm;
   statusBarManager = sbm;
-  context.subscriptions.push(sm, mm, sbm);
+  context.subscriptions.push(sm, mm, sbm, hoverProvider);
   function registerHover() {
-    return vscode6.languages.registerHoverProvider(HOVER_SELECTOR, hoverProvider);
+    return vscode7.languages.registerHoverProvider(
+      HOVER_SELECTOR,
+      hoverProvider
+    );
   }
   if (sm.getEnabled()) {
     hoverRegistrationDisposable = registerHover();
@@ -17055,7 +17229,7 @@ function activate(context) {
   context.subscriptions.push(stateChangeSubscription);
   sbm.registerClickHandler(context);
   sbm.show();
-  const commandDisposable = vscode6.commands.registerCommand(
+  const commandDisposable = vscode7.commands.registerCommand(
     "codelens-ai.explainCode",
     (code, ctx) => {
       void hoverProvider.explainCode(code, ctx);

@@ -21,7 +21,7 @@ export function activate(context: vscode.ExtensionContext): void {
   menuManager = mm;
   statusBarManager = sbm;
 
-  context.subscriptions.push(sm, mm, sbm);
+  context.subscriptions.push(sm, mm, sbm, hoverProvider);
 
   function registerHover(): vscode.Disposable {
     return vscode.languages.registerHoverProvider(

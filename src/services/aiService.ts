@@ -11,6 +11,20 @@ export interface AIConfig {
 }
 
 /**
+ * Converts VS Code's CancellationToken to an AbortSignal so underlying fetch/API
+ * calls can be aborted when the user cancels (e.g. moves the cursor away from hover).
+ */
+function cancellationTokenToAbortSignal(
+  token?: vscode.CancellationToken,
+): AbortSignal | undefined {
+  if (!token) return undefined;
+  if (token.isCancellationRequested) return AbortSignal.abort();
+  const controller = new AbortController();
+  token.onCancellationRequested(() => controller.abort());
+  return controller.signal;
+}
+
+/**
  * Abstraction over OpenAI, Anthropic, and Ollama for code explanations.
  * Reads VS Code config and routes requests to the selected provider.
  */
@@ -29,8 +43,14 @@ export class AIService {
   /**
    * Request an explanation for the given code. Routes to the configured provider.
    * Returns a user-friendly error message on failure instead of throwing.
+   * Optional cancellationToken aborts the request when cancelled (e.g. hover dismissed).
    */
-  async explain(code: string, lang: string, context?: string): Promise<string> {
+  async explain(
+    code: string,
+    lang: string,
+    context?: string,
+    cancellationToken?: vscode.CancellationToken,
+  ): Promise<string> {
     const cfg = this.getConfig();
 
     if (
@@ -44,30 +64,56 @@ export class AIService {
     }
 
     const prompt = this.buildPrompt(code, lang, context);
+    const signal = cancellationTokenToAbortSignal(cancellationToken);
 
     try {
       switch (cfg.provider) {
         case "openai":
-          return await this.callOpenAI(prompt, cfg.model, cfg.apiKey);
+          return await this.callOpenAI(prompt, cfg.model, cfg.apiKey, signal);
         case "anthropic":
           return await this.callAnthropic(
             prompt,
             cfg.model,
             cfg.apiKey,
             cfg.apiBase,
+            signal,
           );
         case "ollama":
-          return await this.callOllama(prompt, cfg.model, cfg.ollamaEndpoint);
+          return await this.callOllama(
+            prompt,
+            cfg.model,
+            cfg.ollamaEndpoint,
+            signal,
+          );
         default:
           return `Unknown provider: ${cfg.provider}. Use openai, anthropic, or ollama.`;
       }
     } catch (err) {
+      if (this.isAbortError(err)) {
+        return "Request was cancelled.";
+      }
       const hasApiBase =
         cfg.provider === "anthropic" && Boolean(cfg.apiBase?.trim());
       const message = this.analyzeError(err, hasApiBase);
       console.error("[CodeLens AI]", err);
       return message;
     }
+  }
+
+  private isAbortError(error: unknown): boolean {
+    if (error instanceof Error) {
+      if (error.name === "AbortError") return true;
+      if (error.message?.toLowerCase().includes("aborted")) return true;
+    }
+    if (
+      typeof error === "object" &&
+      error !== null &&
+      "name" in error &&
+      (error as { name: string }).name === "AbortError"
+    ) {
+      return true;
+    }
+    return false;
   }
 
   /**
@@ -164,12 +210,16 @@ ${code}
     prompt: string,
     model: string,
     apiKey: string,
+    signal?: AbortSignal,
   ): Promise<string> {
     const client = new OpenAI({ apiKey });
-    const completion = await client.chat.completions.create({
-      model,
-      messages: [{ role: "user", content: prompt }],
-    });
+    const completion = await client.chat.completions.create(
+      {
+        model,
+        messages: [{ role: "user", content: prompt }],
+      },
+      { signal: signal ?? undefined },
+    );
     const content = completion.choices[0]?.message?.content;
     if (content == null || content === "") {
       return "No explanation was returned from the provider.";
@@ -182,16 +232,20 @@ ${code}
     model: string,
     apiKey: string,
     apiBase: string,
+    signal?: AbortSignal,
   ): Promise<string> {
     const client = new Anthropic({
       apiKey,
       ...(apiBase ? { baseURL: apiBase } : {}),
     });
-    const message = await client.messages.create({
-      model,
-      max_tokens: 1024,
-      messages: [{ role: "user", content: prompt }],
-    });
+    const message = await client.messages.create(
+      {
+        model,
+        max_tokens: 1024,
+        messages: [{ role: "user", content: prompt }],
+      },
+      { signal: signal ?? undefined },
+    );
     for (const block of message.content) {
       if (
         block.type === "text" &&
@@ -208,6 +262,7 @@ ${code}
     prompt: string,
     model: string,
     endpoint: string,
+    signal?: AbortSignal,
   ): Promise<string> {
     const base = endpoint.replace(/\/$/, "");
     const url = `${base}/api/generate`;
@@ -215,6 +270,7 @@ ${code}
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ model, prompt, stream: false }),
+      signal: signal ?? undefined,
     });
     if (!res.ok) {
       const body = await res.text();
