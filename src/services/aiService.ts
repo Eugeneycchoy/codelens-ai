@@ -189,21 +189,18 @@ export class AIService {
     const contextBlock = context
       ? `\n\nSurrounding context (for reference only):\n\`\`\`\n${context}\n\`\`\``
       : "";
-    return `You explain code to complete beginners who are just learning to program. Your style is:
-- Super simple words (explain like they're 12)
-- Short (2-3 sentences max)
-- Friendly and slightly playful
-- No jargon, no technical terms without explanation
+    return `Explain this code in ONE short sentence. Like you're texting a friend who just started coding.
 
-Format: Just a casual explanation. No bullet points, no numbered lists, no headers.
-
-Example input: \`const sum = (a, b) => a + b;\`
-Example output: This creates a little helper called "sum" that adds two numbers together. Give it 2 and 3, it gives you back 5. Pretty handy when you're too lazy to do math yourself.
-
-Now explain this ${lang} code:
-\`\`\`
-${code}
-\`\`\`${contextBlock}`;
+      Rules:
+      - Max 15 words
+      - No jargon
+      - Casual tone
+      
+      Example: \`arr.filter(x => x > 0)\` → "Keeps only the positive numbers, tosses the rest."
+      
+      \`\`\`
+      ${code}
+      \`\`\`${contextBlock}`;
   }
 
   private async callOpenAI(

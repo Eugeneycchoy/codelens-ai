@@ -16708,6 +16708,10 @@ var CodeLensHoverProvider = class {
         context,
         token
       );
+      if (token?.isCancellationRequested)
+        return;
+      if (explanation === "Request was cancelled.")
+        return;
       this.cacheService.set(code, explanation);
     } catch (err) {
       console.error("[CodeLens AI] fetchExplanation failed", err);
@@ -16837,27 +16841,79 @@ function getExplanationHtml(body) {
 
 // src/managers/stateManager.ts
 var vscode4 = __toESM(require("vscode"));
-var ENABLED_KEY = "codelensAI.enabled";
+var STATE_KEY = "codelens-ai.state";
+var LEGACY_ENABLED_KEY = "codelensAI.enabled";
+var DEBOUNCE_MS = 500;
+var DEFAULT_STATE = {
+  enabled: true,
+  hasShownWelcome: false
+};
 var StateManager = class {
   constructor(context) {
     this.context = context;
-    const stored = context.globalState.get(ENABLED_KEY);
-    this._enabled = stored ?? true;
+    this._state = this.loadState();
   }
-  _enabled;
+  _state;
   _onDidChangeEnabled = new vscode4.EventEmitter();
   onDidChangeEnabled = this._onDidChangeEnabled.event;
+  _setEnabledDebounceTimer;
+  loadState() {
+    const stored = this.context.globalState.get(STATE_KEY);
+    if (stored && typeof stored.enabled === "boolean") {
+      return {
+        enabled: stored.enabled,
+        hasShownWelcome: Boolean(stored.hasShownWelcome)
+      };
+    }
+    const legacyEnabled = this.context.globalState.get(LEGACY_ENABLED_KEY);
+    if (typeof legacyEnabled === "boolean") {
+      void this.migrateLegacyState(legacyEnabled);
+      return { ...DEFAULT_STATE, enabled: legacyEnabled };
+    }
+    return { ...DEFAULT_STATE };
+  }
+  async migrateLegacyState(legacyEnabled) {
+    const migrated = {
+      ...DEFAULT_STATE,
+      enabled: legacyEnabled
+    };
+    await this.context.globalState.update(STATE_KEY, migrated);
+    await this.context.globalState.update(LEGACY_ENABLED_KEY, void 0);
+  }
   getEnabled() {
-    return this._enabled;
+    return this._state.enabled;
   }
   async setEnabled(enabled) {
-    if (this._enabled === enabled)
+    if (this._state.enabled === enabled)
       return;
-    this._enabled = enabled;
-    await this.context.globalState.update(ENABLED_KEY, enabled);
-    this._onDidChangeEnabled.fire(this._enabled);
+    this._state = { ...this._state, enabled };
+    if (this._setEnabledDebounceTimer !== void 0) {
+      clearTimeout(this._setEnabledDebounceTimer);
+    }
+    this._setEnabledDebounceTimer = setTimeout(() => {
+      this._setEnabledDebounceTimer = void 0;
+      void this.persistStateAndNotify();
+    }, DEBOUNCE_MS);
+  }
+  async persistStateAndNotify() {
+    await this.context.globalState.update(STATE_KEY, this._state);
+    this._onDidChangeEnabled.fire(this._state.enabled);
+  }
+  hasShownWelcome() {
+    return this._state.hasShownWelcome;
+  }
+  async markWelcomeShown() {
+    if (this._state.hasShownWelcome)
+      return;
+    this._state = { ...this._state, hasShownWelcome: true };
+    await this.context.globalState.update(STATE_KEY, this._state);
   }
   dispose() {
+    if (this._setEnabledDebounceTimer !== void 0) {
+      void this.context.globalState.update(STATE_KEY, this._state);
+      clearTimeout(this._setEnabledDebounceTimer);
+      this._setEnabledDebounceTimer = void 0;
+    }
     this._onDidChangeEnabled.dispose();
   }
 };
@@ -17236,6 +17292,18 @@ function activate(context) {
     }
   );
   context.subscriptions.push(commandDisposable);
+  const welcomeSubscription = vscode7.workspace.onDidOpenTextDocument(() => {
+    if (sm.hasShownWelcome())
+      return;
+    const message = "\u{1F44B} Welcome to CodeLens AI! Click the icon in the status bar to configure your AI provider and get started.";
+    void vscode7.window.showInformationMessage(message, "Configure Now").then((selection) => {
+      void sm.markWelcomeShown();
+      if (selection === "Configure Now") {
+        mm.showMainMenu();
+      }
+    });
+  });
+  context.subscriptions.push(welcomeSubscription);
 }
 function deactivate() {
   if (hoverRegistrationDisposable) {

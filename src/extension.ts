@@ -60,6 +60,21 @@ export function activate(context: vscode.ExtensionContext): void {
     },
   );
   context.subscriptions.push(commandDisposable);
+
+  const welcomeSubscription = vscode.workspace.onDidOpenTextDocument(() => {
+    if (sm.hasShownWelcome()) return;
+    const message =
+      "👋 Welcome to CodeLens AI! Click the icon in the status bar to configure your AI provider and get started.";
+    void vscode.window
+      .showInformationMessage(message, "Configure Now")
+      .then((selection) => {
+        void sm.markWelcomeShown();
+        if (selection === "Configure Now") {
+          mm.showMainMenu();
+        }
+      });
+  });
+  context.subscriptions.push(welcomeSubscription);
 }
 
 export function deactivate(): void {
