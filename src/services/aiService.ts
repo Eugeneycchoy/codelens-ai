@@ -44,12 +44,17 @@ export class AIService {
    * Request an explanation for the given code. Routes to the configured provider.
    * Returns a user-friendly error message on failure instead of throwing.
    * Optional cancellationToken aborts the request when cancelled (e.g. hover dismissed).
+   * Use explainOptions.detailLevel "detailed" and fileStructure for richer "Learn More" explanations.
    */
   async explain(
     code: string,
     lang: string,
     context?: string,
-    cancellationToken?: vscode.CancellationToken
+    cancellationToken?: vscode.CancellationToken,
+    explainOptions?: {
+      detailLevel?: "brief" | "detailed";
+      fileStructure?: string;
+    }
   ): Promise<string> {
     const cfg = this.getConfig();
 
@@ -63,7 +68,7 @@ export class AIService {
       return apiKeyHint;
     }
 
-    const prompt = this.buildPrompt(code, lang, context);
+    const prompt = this.buildPrompt(code, lang, context, explainOptions);
     const signal = cancellationTokenToAbortSignal(cancellationToken);
 
     try {
@@ -183,12 +188,44 @@ export class AIService {
   }
 
   /**
-   * Builds a prompt that asks for what/why/patterns, concise, without repeating the code.
+   * Builds a prompt for the AI. When detailLevel is "detailed", asks for an in-depth
+   * explanation with step-by-step breakdown, edge cases, and file-structure context.
    */
-  private buildPrompt(code: string, lang: string, context?: string): string {
+  private buildPrompt(
+    code: string,
+    lang: string,
+    context?: string,
+    options?: {
+      detailLevel?: "brief" | "detailed";
+      fileStructure?: string;
+    }
+  ): string {
     const contextBlock = context
       ? `\n\nSurrounding context (for reference only):\n\`\`\`\n${context}\n\`\`\``
       : "";
+    const fileStructureBlock =
+      options?.fileStructure?.trim() && options.detailLevel === "detailed"
+        ? `\n\nFile structure (outline of top-level declarations in this file):\n\`\`\`\n${options.fileStructure.trim()}\n\`\`\``
+        : "";
+
+    if (options?.detailLevel === "detailed") {
+      return `Explain the following ${lang} code in detail for a developer who wants to understand it deeply.
+
+Your explanation should include:
+- **What**: Clear description of what the code does (2–3 sentences)
+- **Why**: Purpose and rationale; why it might be written this way
+- **Step-by-step**: How the code achieves its goal (key steps or control flow)
+- **Patterns & techniques**: Notable patterns, conventions, or language features used
+- **Edge cases / caveats**: Any gotchas, assumptions, or things to watch for
+- **Context**: How this fits with the surrounding code or file structure (use the file outline if provided)
+
+Be thorough but organized. Use short paragraphs or bullet points. Do not repeat the code verbatim.
+
+\`\`\`${lang}
+${code}
+\`\`\`${contextBlock}${fileStructureBlock}`;
+    }
+
     return `Explain the following ${lang} code concisely.
 
 Your explanation should:
