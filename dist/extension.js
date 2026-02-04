@@ -6661,7 +6661,7 @@ __export(extension_exports, {
   deactivate: () => deactivate
 });
 module.exports = __toCommonJS(extension_exports);
-var vscode7 = __toESM(require("vscode"));
+var vscode13 = __toESM(require("vscode"));
 
 // src/providers/hoverProvider.ts
 var vscode3 = __toESM(require("vscode"));
@@ -8718,12 +8718,12 @@ var castToError = (err) => {
   }
   return new Error(err);
 };
-var readEnv = (env) => {
+var readEnv = (env4) => {
   if (typeof process !== "undefined") {
-    return process.env?.[env]?.trim() ?? void 0;
+    return process.env?.[env4]?.trim() ?? void 0;
   }
   if (typeof Deno !== "undefined") {
-    return Deno.env?.get?.(env)?.trim();
+    return Deno.env?.get?.(env4)?.trim();
   }
   return void 0;
 };
@@ -14475,12 +14475,12 @@ var castToError2 = (err) => {
   }
   return new Error(String(err));
 };
-var readEnv2 = (env) => {
+var readEnv2 = (env4) => {
   if (typeof process !== "undefined") {
-    return process.env?.[env]?.trim() ?? void 0;
+    return process.env?.[env4]?.trim() ?? void 0;
   }
   if (typeof Deno !== "undefined") {
-    return Deno.env?.get?.(env)?.trim();
+    return Deno.env?.get?.(env4)?.trim();
   }
   return void 0;
 };
@@ -16365,21 +16365,18 @@ Surrounding context (for reference only):
 \`\`\`
 ${context}
 \`\`\`` : "";
-    return `You explain code to complete beginners who are just learning to program. Your style is:
-- Super simple words (explain like they're 12)
-- Short (2-3 sentences max)
-- Friendly and slightly playful
-- No jargon, no technical terms without explanation
+    return `Explain this code in ONE short sentence. Like you're texting a friend who just started coding.
 
-Format: Just a casual explanation. No bullet points, no numbered lists, no headers.
-
-Example input: \`const sum = (a, b) => a + b;\`
-Example output: This creates a little helper called "sum" that adds two numbers together. Give it 2 and 3, it gives you back 5. Pretty handy when you're too lazy to do math yourself.
-
-Now explain this ${lang} code:
-\`\`\`
-${code}
-\`\`\`${contextBlock}`;
+      Rules:
+      - Max 15 words
+      - No jargon
+      - Casual tone
+      
+      Example: \`arr.filter(x => x > 0)\` \u2192 "Keeps only the positive numbers, tosses the rest."
+      
+      \`\`\`
+      ${code}
+      \`\`\`${contextBlock}`;
   }
   async callOpenAI(prompt, model, apiKey, signal) {
     const client = new openai_default({ apiKey });
@@ -17244,11 +17241,1986 @@ var StatusBarManager = class {
   }
 };
 
+// src/managers/prototypeManager.ts
+var vscode10 = __toESM(require("vscode"));
+
+// src/providers/codeLensProvider.ts
+var vscode7 = __toESM(require("vscode"));
+var ExplainCodeLens = class extends vscode7.CodeLens {
+  constructor(range, code, context, languageId) {
+    super(range);
+    this.code = code;
+    this.context = context;
+    this.languageId = languageId;
+  }
+};
+var CodeLensExplainProvider = class {
+  aiService = new AIService();
+  cacheService = new CacheService();
+  contextExtractor = new ContextExtractor();
+  _onDidChangeCodeLenses = new vscode7.EventEmitter();
+  onDidChangeCodeLenses = this._onDidChangeCodeLenses.event;
+  // Track pending explanations to show loading state
+  pendingExplanations = /* @__PURE__ */ new Set();
+  // Patterns to detect code constructs worth explaining
+  patterns = {
+    // Function declarations and expressions
+    function: /^\s*(export\s+)?(async\s+)?function\s+(\w+)/,
+    arrowFunction: /^\s*(export\s+)?(const|let|var)\s+(\w+)\s*=\s*(async\s+)?\(/,
+    arrowFunctionShort: /^\s*(export\s+)?(const|let|var)\s+(\w+)\s*=\s*(async\s+)?(\w+|\([^)]*\))\s*=>/,
+    // Class and method declarations
+    class: /^\s*(export\s+)?(abstract\s+)?class\s+(\w+)/,
+    method: /^\s*(public|private|protected|static|async|\s)*(\w+)\s*\([^)]*\)\s*[:{]/,
+    // React/JSX components
+    component: /^\s*(export\s+)?(const|function)\s+([A-Z]\w+)/,
+    // Variable declarations with complex values
+    complexVariable: /^\s*(export\s+)?(const|let|var)\s+(\w+)\s*=\s*(new\s+\w+|\{|\[|function|class)/,
+    // Python patterns
+    pythonFunction: /^\s*(async\s+)?def\s+(\w+)/,
+    pythonClass: /^\s*class\s+(\w+)/,
+    // Go patterns
+    goFunction: /^\s*func\s+(\([^)]+\)\s*)?(\w+)/,
+    goStruct: /^\s*type\s+(\w+)\s+struct/,
+    // Rust patterns
+    rustFunction: /^\s*(pub\s+)?(async\s+)?fn\s+(\w+)/,
+    rustStruct: /^\s*(pub\s+)?struct\s+(\w+)/,
+    rustImpl: /^\s*impl\s+(<[^>]+>\s+)?(\w+)/
+  };
+  provideCodeLenses(document, _token) {
+    const constructs = this.detectConstructs(document);
+    return constructs.map(
+      (c2) => new ExplainCodeLens(c2.range, c2.code, c2.context, document.languageId)
+    );
+  }
+  resolveCodeLens(codeLens, _token) {
+    if (!(codeLens instanceof ExplainCodeLens)) {
+      return codeLens;
+    }
+    const key = this.getKey(codeLens.code);
+    const cached = this.cacheService.get(codeLens.code);
+    const isPending = this.pendingExplanations.has(key);
+    if (isPending) {
+      codeLens.command = {
+        title: "$(loading~spin) Explaining...",
+        command: ""
+      };
+    } else if (cached) {
+      const preview = cached.length > 50 ? `${cached.substring(0, 47)}...` : cached;
+      codeLens.command = {
+        title: `$(lightbulb) ${preview}`,
+        command: "codelens-ai.showExplanation",
+        arguments: [cached, codeLens.code]
+      };
+    } else {
+      codeLens.command = {
+        title: "$(comment-discussion) Explain this code",
+        command: "codelens-ai.explainCodeLens",
+        arguments: [codeLens.code, codeLens.context, codeLens.languageId]
+      };
+    }
+    return codeLens;
+  }
+  /**
+   * Called when user clicks "Explain this code" CodeLens.
+   * Fetches explanation and updates the CodeLens to show the result.
+   */
+  async handleExplainClick(code, context, languageId) {
+    const key = this.getKey(code);
+    this.pendingExplanations.add(key);
+    this._onDidChangeCodeLenses.fire();
+    try {
+      const explanation = await this.aiService.explain(
+        code,
+        languageId,
+        context
+      );
+      this.cacheService.set(code, explanation);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.cacheService.set(code, `Error: ${message}`);
+    } finally {
+      this.pendingExplanations.delete(key);
+      this._onDidChangeCodeLenses.fire();
+    }
+  }
+  /**
+   * Shows a quick pick with the full explanation when user clicks a resolved CodeLens.
+   */
+  async showExplanation(explanation, code) {
+    const codePreview = code.length > 60 ? `${code.substring(0, 57)}...` : code;
+    await vscode7.window.showInformationMessage(
+      explanation,
+      { modal: false, detail: `Code: ${codePreview}` },
+      "Copy",
+      "Open in Panel"
+    ).then((selection) => {
+      if (selection === "Copy") {
+        vscode7.env.clipboard.writeText(explanation);
+        vscode7.window.showInformationMessage(
+          "Explanation copied to clipboard"
+        );
+      } else if (selection === "Open in Panel") {
+        vscode7.commands.executeCommand("codelens-ai.explainCode", code, "");
+      }
+    });
+  }
+  /**
+   * Detects code constructs in the document that are worth explaining.
+   * Uses regex patterns for different languages.
+   */
+  detectConstructs(document) {
+    const constructs = [];
+    const lineCount = document.lineCount;
+    const languageId = document.languageId;
+    for (let i2 = 0; i2 < lineCount; i2++) {
+      const line = document.lineAt(i2);
+      const text = line.text;
+      if (text.trim().length === 0)
+        continue;
+      if (this.isCommentLine(text, languageId))
+        continue;
+      const construct = this.matchConstruct(text, i2, document);
+      if (construct) {
+        constructs.push(construct);
+      }
+    }
+    return constructs;
+  }
+  matchConstruct(text, lineIndex, document) {
+    const position = new vscode7.Position(lineIndex, 0);
+    const range = new vscode7.Range(lineIndex, 0, lineIndex, text.length);
+    for (const [patternName, pattern] of Object.entries(this.patterns)) {
+      const match = text.match(pattern);
+      if (match) {
+        const name = this.extractName(match, patternName);
+        const type = this.getConstructType(patternName);
+        const { code, context } = this.contextExtractor.extract(
+          document,
+          position,
+          10
+        );
+        const blockCode = this.contextExtractor.extractBlock(
+          document,
+          position
+        );
+        return {
+          type,
+          name,
+          range,
+          code: blockCode.length < 500 ? blockCode : code,
+          context
+        };
+      }
+    }
+    return null;
+  }
+  extractName(match, patternName) {
+    const groups = match.filter(
+      (g2) => g2 && !g2.includes("export") && !g2.includes("const")
+    );
+    return groups[groups.length - 1] || "unnamed";
+  }
+  getConstructType(patternName) {
+    if (patternName.includes("class") || patternName.includes("struct")) {
+      return "class";
+    }
+    if (patternName.includes("method")) {
+      return "method";
+    }
+    if (patternName.includes("function") || patternName.includes("Function")) {
+      return "function";
+    }
+    if (patternName.includes("Variable")) {
+      return "variable";
+    }
+    return "block";
+  }
+  isCommentLine(text, languageId) {
+    const trimmed = text.trim();
+    if (trimmed.startsWith("//"))
+      return true;
+    if (trimmed.startsWith("/*"))
+      return true;
+    if (trimmed.startsWith("*"))
+      return true;
+    if (trimmed.startsWith("#") && languageId !== "csharp")
+      return true;
+    if (trimmed.startsWith("--") && languageId === "lua")
+      return true;
+    return false;
+  }
+  getKey(code) {
+    let hash = 0;
+    for (let i2 = 0; i2 < code.length; i2++) {
+      hash = (hash << 5) - hash + code.charCodeAt(i2);
+      hash = hash & hash;
+    }
+    return String(hash);
+  }
+  dispose() {
+    this._onDidChangeCodeLenses.dispose();
+  }
+};
+
+// src/providers/peekViewProvider.ts
+var vscode8 = __toESM(require("vscode"));
+var EXPLAIN_SCHEME = "codelens-explain";
+var explanationStore = /* @__PURE__ */ new Map();
+var ExplanationDocumentProvider = class {
+  _onDidChange = new vscode8.EventEmitter();
+  onDidChange = this._onDidChange.event;
+  provideTextDocumentContent(uri) {
+    const id = uri.path;
+    const data = explanationStore.get(id);
+    if (!data) {
+      return "// No explanation available. Try triggering the explain command again.";
+    }
+    return this.formatExplanation(data);
+  }
+  /**
+   * Formats the explanation as a readable document with metadata.
+   * Uses the target language for syntax highlighting in code blocks.
+   */
+  formatExplanation(data) {
+    const header = `// \u{1F9E0} CodeLens AI Explanation
+// Generated: ${new Date(data.timestamp).toLocaleString()}
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+
+`;
+    const explanation = `/*
+ * ${data.explanation.split("\n").join("\n * ")}
+ */
+
+`;
+    const codeSection = `// Original Code:
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+${data.code}
+`;
+    return header + explanation + codeSection;
+  }
+  /**
+   * Notifies VS Code that a document's content has changed.
+   */
+  update(uri) {
+    this._onDidChange.fire(uri);
+  }
+  dispose() {
+    this._onDidChange.dispose();
+    explanationStore.clear();
+  }
+};
+var PeekExplanationProvider = class {
+  aiService = new AIService();
+  cacheService = new CacheService();
+  contextExtractor = new ContextExtractor();
+  documentProvider;
+  disposables = [];
+  constructor() {
+    this.documentProvider = new ExplanationDocumentProvider();
+    const registration = vscode8.workspace.registerTextDocumentContentProvider(
+      EXPLAIN_SCHEME,
+      this.documentProvider
+    );
+    this.disposables.push(registration);
+  }
+  /**
+   * Shows AI explanation in a peek view for the current cursor position.
+   * Call this via a command to avoid intercepting Go to Definition.
+   */
+  async showPeekExplanation() {
+    const editor = vscode8.window.activeTextEditor;
+    if (!editor) {
+      vscode8.window.showWarningMessage("No active editor");
+      return;
+    }
+    const document = editor.document;
+    const position = editor.selection.active;
+    const lineText = document.lineAt(position.line).text;
+    if (lineText.trim().length === 0) {
+      vscode8.window.showInformationMessage("Place cursor on a line with code");
+      return;
+    }
+    const { code, context } = this.contextExtractor.extract(document, position);
+    if (code.length === 0) {
+      vscode8.window.showInformationMessage("No code found at cursor position");
+      return;
+    }
+    let explanation = this.cacheService.get(code);
+    if (!explanation) {
+      explanation = await vscode8.window.withProgress(
+        {
+          location: vscode8.ProgressLocation.Notification,
+          title: "CodeLens AI: Generating explanation...",
+          cancellable: true
+        },
+        async (_progress, token) => {
+          return this.aiService.explain(
+            code,
+            document.languageId,
+            context,
+            token
+          );
+        }
+      );
+      if (!explanation)
+        return;
+      this.cacheService.set(code, explanation);
+    }
+    const id = this.generateId(code);
+    explanationStore.set(id, {
+      explanation,
+      code,
+      languageId: document.languageId,
+      timestamp: Date.now()
+    });
+    const uri = vscode8.Uri.parse(`${EXPLAIN_SCHEME}:${id}`);
+    this.documentProvider.update(uri);
+    await vscode8.commands.executeCommand(
+      "editor.action.peekLocations",
+      editor.document.uri,
+      position,
+      [new vscode8.Location(uri, new vscode8.Position(0, 0))],
+      "peek"
+    );
+  }
+  generateId(code) {
+    let hash = 0;
+    for (let i2 = 0; i2 < code.length; i2++) {
+      hash = (hash << 5) - hash + code.charCodeAt(i2);
+      hash = hash & hash;
+    }
+    return `explain-${Math.abs(hash)}-${Date.now()}`;
+  }
+  dispose() {
+    this.disposables.forEach((d2) => d2.dispose());
+    this.documentProvider.dispose();
+  }
+};
+var QuickPeekProvider = class {
+  aiService = new AIService();
+  cacheService = new CacheService();
+  contextExtractor = new ContextExtractor();
+  /**
+   * Shows a quick peek explanation for the current cursor position.
+   */
+  async showQuickPeek() {
+    const editor = vscode8.window.activeTextEditor;
+    if (!editor) {
+      vscode8.window.showWarningMessage("No active editor");
+      return;
+    }
+    const document = editor.document;
+    const position = editor.selection.active;
+    const lineText = document.lineAt(position.line).text;
+    if (lineText.trim().length === 0) {
+      vscode8.window.showInformationMessage("Place cursor on a line with code");
+      return;
+    }
+    const { code, context } = this.contextExtractor.extract(document, position);
+    let explanation = this.cacheService.get(code);
+    if (!explanation) {
+      const loadingPick = vscode8.window.createQuickPick();
+      loadingPick.title = "\u{1F9E0} CodeLens AI";
+      loadingPick.placeholder = "Generating explanation...";
+      loadingPick.busy = true;
+      loadingPick.show();
+      try {
+        explanation = await this.aiService.explain(
+          code,
+          document.languageId,
+          context
+        );
+        this.cacheService.set(code, explanation);
+      } catch (err) {
+        explanation = `Error: ${err instanceof Error ? err.message : String(err)}`;
+      } finally {
+        loadingPick.hide();
+        loadingPick.dispose();
+      }
+    }
+    const items = [
+      {
+        label: "$(lightbulb) Explanation",
+        description: explanation,
+        detail: `Code: ${code.length > 50 ? code.substring(0, 47) + "..." : code}`
+      },
+      {
+        label: "$(clippy) Copy to Clipboard",
+        description: "Copy the explanation text"
+      },
+      {
+        label: "$(open-preview) Open in Panel",
+        description: "View in side panel with full formatting"
+      }
+    ];
+    const selection = await vscode8.window.showQuickPick(items, {
+      title: "\u{1F9E0} CodeLens AI Quick Peek",
+      placeHolder: explanation
+    });
+    if (selection?.label.includes("Copy")) {
+      await vscode8.env.clipboard.writeText(explanation);
+      vscode8.window.showInformationMessage("Copied to clipboard");
+    } else if (selection?.label.includes("Panel")) {
+      vscode8.commands.executeCommand("codelens-ai.explainCode", code, context);
+    }
+  }
+  dispose() {
+  }
+};
+var InlinePeekProvider = class {
+  aiService = new AIService();
+  cacheService = new CacheService();
+  contextExtractor = new ContextExtractor();
+  // Decoration types for the inline peek zone
+  peekZoneDecoration = null;
+  currentEditor = null;
+  disposables = [];
+  constructor() {
+    this.disposables.push(
+      vscode8.window.onDidChangeTextEditorSelection((e2) => {
+        if (e2.textEditor === this.currentEditor) {
+          this.dismissPeek();
+        }
+      })
+    );
+  }
+  /**
+   * Shows an inline peek for the code at the current cursor position.
+   */
+  async showInlinePeek() {
+    const editor = vscode8.window.activeTextEditor;
+    if (!editor)
+      return;
+    this.dismissPeek();
+    this.currentEditor = editor;
+    const document = editor.document;
+    const position = editor.selection.active;
+    const lineText = document.lineAt(position.line).text;
+    if (lineText.trim().length === 0)
+      return;
+    const { code, context } = this.contextExtractor.extract(document, position);
+    let explanation = this.cacheService.get(code);
+    if (!explanation) {
+      this.showPeekDecoration(
+        editor,
+        position.line,
+        "\u23F3 Loading explanation..."
+      );
+      try {
+        explanation = await this.aiService.explain(
+          code,
+          document.languageId,
+          context
+        );
+        this.cacheService.set(code, explanation);
+      } catch (err) {
+        explanation = `Error: ${err instanceof Error ? err.message : String(err)}`;
+      }
+    }
+    this.showPeekDecoration(editor, position.line, explanation);
+  }
+  /**
+   * Creates a decoration that appears below the target line,
+   * simulating a peek view zone.
+   */
+  showPeekDecoration(editor, line, content) {
+    this.dismissPeek();
+    this.peekZoneDecoration = vscode8.window.createTextEditorDecorationType({
+      after: {
+        contentText: ` \u{1F4A1} ${content}`,
+        color: new vscode8.ThemeColor("editorCodeLens.foreground"),
+        fontStyle: "italic",
+        margin: "0 0 0 2em"
+      },
+      isWholeLine: true,
+      backgroundColor: new vscode8.ThemeColor("editor.hoverHighlightBackground")
+    });
+    const range = new vscode8.Range(line, 0, line, 0);
+    editor.setDecorations(this.peekZoneDecoration, [range]);
+  }
+  dismissPeek() {
+    if (this.peekZoneDecoration) {
+      this.peekZoneDecoration.dispose();
+      this.peekZoneDecoration = null;
+    }
+    this.currentEditor = null;
+  }
+  dispose() {
+    this.dismissPeek();
+    this.disposables.forEach((d2) => d2.dispose());
+  }
+};
+
+// src/providers/sidePanelProvider.ts
+var vscode9 = __toESM(require("vscode"));
+var SidePanelProvider = class {
+  constructor(extensionUri) {
+    this.extensionUri = extensionUri;
+  }
+  static viewType = "codelens-ai.explanationPanel";
+  aiService = new AIService();
+  cacheService = new CacheService();
+  contextExtractor = new ContextExtractor();
+  view;
+  history = [];
+  disposables = [];
+  // Track current explanation being displayed
+  currentExplanation = null;
+  resolveWebviewView(webviewView, _context, _token) {
+    this.view = webviewView;
+    webviewView.webview.options = {
+      enableScripts: true,
+      localResourceRoots: [this.extensionUri]
+    };
+    webviewView.webview.html = this.getHtml();
+    webviewView.webview.onDidReceiveMessage(
+      async (message) => {
+        switch (message.command) {
+          case "copy":
+            if (this.currentExplanation) {
+              await vscode9.env.clipboard.writeText(
+                this.currentExplanation.explanation
+              );
+              vscode9.window.showInformationMessage("Copied to clipboard");
+            }
+            break;
+          case "refresh":
+            await this.refreshExplanation();
+            break;
+          case "loadHistory":
+            this.loadHistoryEntry(message.id);
+            break;
+          case "clearHistory":
+            this.history = [];
+            this.updateView();
+            break;
+          case "explainSelection":
+            await this.explainCurrentSelection();
+            break;
+        }
+      },
+      null,
+      this.disposables
+    );
+    this.updateView();
+  }
+  /**
+   * Explains the currently selected or cursor-adjacent code.
+   */
+  async explainCurrentSelection() {
+    const editor = vscode9.window.activeTextEditor;
+    if (!editor) {
+      this.showMessage("No active editor. Open a file first.");
+      return;
+    }
+    const document = editor.document;
+    const selection = editor.selection;
+    let code;
+    let context;
+    let lineNumber;
+    if (!selection.isEmpty) {
+      code = document.getText(selection).trim();
+      context = "";
+      lineNumber = selection.start.line + 1;
+    } else {
+      const position = selection.active;
+      const extracted = this.contextExtractor.extract(document, position);
+      code = extracted.code;
+      context = extracted.context;
+      lineNumber = position.line + 1;
+    }
+    if (code.length === 0) {
+      this.showMessage("Select some code or place cursor on a non-empty line.");
+      return;
+    }
+    await this.explainCode(
+      code,
+      context,
+      document.languageId,
+      document.fileName,
+      lineNumber
+    );
+  }
+  /**
+   * Main method to explain code and display in the panel.
+   */
+  async explainCode(code, context, languageId, fileName, lineNumber) {
+    if (this.view) {
+      this.view.show(true);
+    }
+    this.currentExplanation = {
+      code,
+      explanation: "",
+      isLoading: true
+    };
+    this.updateView();
+    let explanation = this.cacheService.get(code);
+    if (!explanation) {
+      try {
+        explanation = await this.aiService.explain(code, languageId, context);
+        this.cacheService.set(code, explanation);
+      } catch (err) {
+        explanation = `Error: ${err instanceof Error ? err.message : String(err)}`;
+      }
+    }
+    this.currentExplanation = {
+      code,
+      explanation,
+      isLoading: false
+    };
+    const historyEntry = {
+      id: this.generateId(),
+      code,
+      explanation,
+      languageId,
+      fileName: fileName.split("/").pop() || fileName,
+      lineNumber,
+      timestamp: Date.now()
+    };
+    this.history.unshift(historyEntry);
+    if (this.history.length > 20) {
+      this.history = this.history.slice(0, 20);
+    }
+    this.updateView();
+  }
+  /**
+   * Refreshes the current explanation by fetching again from AI.
+   */
+  async refreshExplanation() {
+    if (!this.currentExplanation)
+      return;
+    const code = this.currentExplanation.code;
+    this.cacheService.clear();
+    this.currentExplanation.isLoading = true;
+    this.updateView();
+    try {
+      const explanation = await this.aiService.explain(code, "plaintext", "");
+      this.cacheService.set(code, explanation);
+      this.currentExplanation.explanation = explanation;
+    } catch (err) {
+      this.currentExplanation.explanation = `Error: ${err instanceof Error ? err.message : String(err)}`;
+    }
+    this.currentExplanation.isLoading = false;
+    this.updateView();
+  }
+  /**
+   * Loads a history entry as the current explanation.
+   */
+  loadHistoryEntry(id) {
+    const entry = this.history.find((h2) => h2.id === id);
+    if (entry) {
+      this.currentExplanation = {
+        code: entry.code,
+        explanation: entry.explanation,
+        isLoading: false
+      };
+      this.updateView();
+    }
+  }
+  /**
+   * Shows a message in the panel.
+   */
+  showMessage(message) {
+    this.currentExplanation = {
+      code: "",
+      explanation: message,
+      isLoading: false
+    };
+    this.updateView();
+  }
+  /**
+   * Updates the webview content.
+   */
+  updateView() {
+    if (this.view) {
+      this.view.webview.postMessage({
+        type: "update",
+        explanation: this.currentExplanation,
+        history: this.history.slice(0, 10)
+      });
+    }
+  }
+  generateId() {
+    return `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+  }
+  /**
+   * Returns the HTML for the webview panel.
+   * Includes modern styling and interactive features.
+   */
+  getHtml() {
+    return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline';">
+  <title>CodeLens AI</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+    
+    body {
+      font-family: var(--vscode-font-family);
+      font-size: var(--vscode-font-size);
+      color: var(--vscode-foreground);
+      background: var(--vscode-sideBar-background);
+      padding: 12px;
+      line-height: 1.5;
+    }
+    
+    .header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 16px;
+      padding-bottom: 12px;
+      border-bottom: 1px solid var(--vscode-panel-border);
+    }
+    
+    .header h1 {
+      font-size: 14px;
+      font-weight: 600;
+      flex: 1;
+    }
+    
+    .btn {
+      background: var(--vscode-button-secondaryBackground);
+      color: var(--vscode-button-secondaryForeground);
+      border: none;
+      padding: 4px 8px;
+      border-radius: 3px;
+      cursor: pointer;
+      font-size: 12px;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+    }
+    
+    .btn:hover {
+      background: var(--vscode-button-secondaryHoverBackground);
+    }
+    
+    .btn-primary {
+      background: var(--vscode-button-background);
+      color: var(--vscode-button-foreground);
+    }
+    
+    .btn-primary:hover {
+      background: var(--vscode-button-hoverBackground);
+    }
+    
+    .section {
+      margin-bottom: 16px;
+    }
+    
+    .section-title {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: var(--vscode-descriptionForeground);
+      margin-bottom: 8px;
+    }
+    
+    .explanation-card {
+      background: var(--vscode-editor-background);
+      border: 1px solid var(--vscode-panel-border);
+      border-radius: 6px;
+      padding: 12px;
+      margin-bottom: 12px;
+    }
+    
+    .explanation-text {
+      font-size: 13px;
+      line-height: 1.6;
+      white-space: pre-wrap;
+      word-wrap: break-word;
+    }
+    
+    .code-preview {
+      background: var(--vscode-textBlockQuote-background);
+      border-left: 3px solid var(--vscode-textLink-foreground);
+      padding: 8px 12px;
+      margin-top: 12px;
+      font-family: var(--vscode-editor-font-family);
+      font-size: 12px;
+      overflow-x: auto;
+      white-space: pre;
+      max-height: 150px;
+      overflow-y: auto;
+    }
+    
+    .actions {
+      display: flex;
+      gap: 8px;
+      margin-top: 12px;
+    }
+    
+    .loading {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--vscode-descriptionForeground);
+    }
+    
+    .spinner {
+      width: 16px;
+      height: 16px;
+      border: 2px solid var(--vscode-progressBar-background);
+      border-top: 2px solid var(--vscode-textLink-foreground);
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+    }
+    
+    @keyframes spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+    
+    .empty-state {
+      text-align: center;
+      padding: 24px;
+      color: var(--vscode-descriptionForeground);
+    }
+    
+    .empty-state-icon {
+      font-size: 32px;
+      margin-bottom: 12px;
+    }
+    
+    .history-list {
+      list-style: none;
+    }
+    
+    .history-item {
+      padding: 8px;
+      border-radius: 4px;
+      cursor: pointer;
+      margin-bottom: 4px;
+      border: 1px solid transparent;
+    }
+    
+    .history-item:hover {
+      background: var(--vscode-list-hoverBackground);
+      border-color: var(--vscode-panel-border);
+    }
+    
+    .history-item-code {
+      font-family: var(--vscode-editor-font-family);
+      font-size: 11px;
+      color: var(--vscode-descriptionForeground);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    
+    .history-item-meta {
+      font-size: 10px;
+      color: var(--vscode-descriptionForeground);
+      margin-top: 2px;
+    }
+    
+    .collapsible {
+      cursor: pointer;
+      user-select: none;
+    }
+    
+    .collapsible::before {
+      content: "\u25B6";
+      display: inline-block;
+      margin-right: 6px;
+      font-size: 10px;
+      transition: transform 0.2s;
+    }
+    
+    .collapsible.open::before {
+      transform: rotate(90deg);
+    }
+    
+    .collapsible-content {
+      display: none;
+      margin-top: 8px;
+    }
+    
+    .collapsible.open + .collapsible-content {
+      display: block;
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>\u{1F9E0} CodeLens AI</h1>
+    <button class="btn btn-primary" onclick="explainSelection()">Explain Selection</button>
+  </div>
+  
+  <div id="content">
+    <div class="empty-state">
+      <div class="empty-state-icon">\u{1F4A1}</div>
+      <p>Select code and click "Explain Selection"<br>or use the keyboard shortcut.</p>
+    </div>
+  </div>
+  
+  <div class="section" id="history-section" style="display: none;">
+    <h3 class="section-title collapsible" onclick="toggleHistory()">Recent Explanations</h3>
+    <div class="collapsible-content" id="history-content">
+      <ul class="history-list" id="history-list"></ul>
+      <button class="btn" onclick="clearHistory()" style="margin-top: 8px;">Clear History</button>
+    </div>
+  </div>
+  
+  <script>
+    const vscode = acquireVsCodeApi();
+    
+    function explainSelection() {
+      vscode.postMessage({ command: 'explainSelection' });
+    }
+    
+    function copyExplanation() {
+      vscode.postMessage({ command: 'copy' });
+    }
+    
+    function refreshExplanation() {
+      vscode.postMessage({ command: 'refresh' });
+    }
+    
+    function loadHistory(id) {
+      vscode.postMessage({ command: 'loadHistory', id });
+    }
+    
+    function clearHistory() {
+      vscode.postMessage({ command: 'clearHistory' });
+    }
+    
+    function toggleHistory() {
+      const el = document.querySelector('#history-section .section-title');
+      el.classList.toggle('open');
+    }
+    
+    function escapeHtml(text) {
+      const div = document.createElement('div');
+      div.textContent = text;
+      return div.innerHTML;
+    }
+    
+    function formatTime(timestamp) {
+      const date = new Date(timestamp);
+      return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    }
+    
+    window.addEventListener('message', event => {
+      const message = event.data;
+      
+      if (message.type === 'update') {
+        const { explanation, history } = message;
+        const content = document.getElementById('content');
+        const historySection = document.getElementById('history-section');
+        const historyList = document.getElementById('history-list');
+        
+        if (explanation && (explanation.explanation || explanation.isLoading)) {
+          if (explanation.isLoading) {
+            content.innerHTML = \`
+              <div class="explanation-card">
+                <div class="loading">
+                  <div class="spinner"></div>
+                  <span>Generating explanation...</span>
+                </div>
+              </div>
+            \`;
+          } else {
+            const codePreview = explanation.code 
+              ? \`<div class="code-preview">\${escapeHtml(explanation.code)}</div>\`
+              : '';
+            
+            content.innerHTML = \`
+              <div class="explanation-card">
+                <div class="explanation-text">\${escapeHtml(explanation.explanation)}</div>
+                \${codePreview}
+                <div class="actions">
+                  <button class="btn" onclick="copyExplanation()">\u{1F4CB} Copy</button>
+                  <button class="btn" onclick="refreshExplanation()">\u{1F504} Refresh</button>
+                </div>
+              </div>
+            \`;
+          }
+        }
+        
+        if (history && history.length > 0) {
+          historySection.style.display = 'block';
+          historyList.innerHTML = history.map(entry => \`
+            <li class="history-item" onclick="loadHistory('\${entry.id}')">
+              <div class="history-item-code">\${escapeHtml(entry.code.substring(0, 60))}</div>
+              <div class="history-item-meta">\${entry.fileName}:\${entry.lineNumber} \u2022 \${formatTime(entry.timestamp)}</div>
+            </li>
+          \`).join('');
+        } else {
+          historySection.style.display = 'none';
+        }
+      }
+    });
+  </script>
+</body>
+</html>`;
+  }
+  dispose() {
+    this.disposables.forEach((d2) => d2.dispose());
+  }
+};
+var FloatingPanelProvider = class {
+  constructor(extensionUri) {
+    this.extensionUri = extensionUri;
+  }
+  aiService = new AIService();
+  cacheService = new CacheService();
+  contextExtractor = new ContextExtractor();
+  panel = null;
+  disposables = [];
+  /**
+   * Shows explanation in a floating webview panel beside the editor.
+   */
+  async showExplanation(code, context) {
+    const editor = vscode9.window.activeTextEditor;
+    if (!editor && !code) {
+      vscode9.window.showWarningMessage("No code to explain");
+      return;
+    }
+    if (!code) {
+      const document = editor.document;
+      const selection = editor.selection;
+      if (!selection.isEmpty) {
+        code = document.getText(selection).trim();
+        context = "";
+      } else {
+        const extracted = this.contextExtractor.extract(
+          document,
+          selection.active
+        );
+        code = extracted.code;
+        context = extracted.context;
+      }
+    }
+    if (!code || code.length === 0) {
+      vscode9.window.showWarningMessage("No code selected");
+      return;
+    }
+    if (this.panel) {
+      this.panel.reveal(vscode9.ViewColumn.Beside);
+    } else {
+      this.panel = vscode9.window.createWebviewPanel(
+        "codelens-ai.floatingPanel",
+        "\u{1F9E0} CodeLens AI",
+        vscode9.ViewColumn.Beside,
+        {
+          enableScripts: true,
+          retainContextWhenHidden: true
+        }
+      );
+      this.panel.onDidDispose(
+        () => {
+          this.panel = null;
+        },
+        null,
+        this.disposables
+      );
+      this.panel.webview.onDidReceiveMessage(
+        async (message) => {
+          if (message.command === "copy" && message.text) {
+            await vscode9.env.clipboard.writeText(message.text);
+            vscode9.window.showInformationMessage("Copied to clipboard");
+          }
+        },
+        null,
+        this.disposables
+      );
+    }
+    this.panel.webview.html = this.getLoadingHtml(code);
+    const languageId = editor?.document.languageId ?? "plaintext";
+    let explanation = this.cacheService.get(code);
+    if (!explanation) {
+      try {
+        explanation = await this.aiService.explain(
+          code,
+          languageId,
+          context ?? ""
+        );
+        this.cacheService.set(code, explanation);
+      } catch (err) {
+        explanation = `Error: ${err instanceof Error ? err.message : String(err)}`;
+      }
+    }
+    this.panel.webview.html = this.getResultHtml(code, explanation, languageId);
+  }
+  getLoadingHtml(code) {
+    return `<!DOCTYPE html>
+<html>
+<head>
+  <style>
+    body {
+      font-family: var(--vscode-font-family);
+      padding: 20px;
+      color: var(--vscode-foreground);
+      background: var(--vscode-editor-background);
+    }
+    .loading {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin: 20px 0;
+    }
+    .spinner {
+      width: 20px;
+      height: 20px;
+      border: 2px solid var(--vscode-progressBar-background);
+      border-top: 2px solid var(--vscode-textLink-foreground);
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+    }
+    @keyframes spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+    .code-preview {
+      background: var(--vscode-textBlockQuote-background);
+      padding: 12px;
+      border-radius: 4px;
+      font-family: var(--vscode-editor-font-family);
+      font-size: 12px;
+      overflow-x: auto;
+      white-space: pre;
+    }
+  </style>
+</head>
+<body>
+  <h2>\u{1F9E0} CodeLens AI</h2>
+  <div class="loading">
+    <div class="spinner"></div>
+    <span>Generating explanation...</span>
+  </div>
+  <h3>Code</h3>
+  <pre class="code-preview">${this.escapeHtml(code)}</pre>
+</body>
+</html>`;
+  }
+  getResultHtml(code, explanation, languageId) {
+    const rawExplanationJson = JSON.stringify(explanation);
+    return `<!DOCTYPE html>
+<html>
+<head>
+  <style>
+    body {
+      font-family: var(--vscode-font-family);
+      padding: 20px;
+      color: var(--vscode-foreground);
+      background: var(--vscode-editor-background);
+      line-height: 1.6;
+    }
+    h2 {
+      margin-top: 0;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .explanation {
+      background: var(--vscode-textBlockQuote-background);
+      border-left: 3px solid var(--vscode-textLink-foreground);
+      padding: 16px;
+      margin: 16px 0;
+      border-radius: 0 4px 4px 0;
+    }
+    .code-preview {
+      background: var(--vscode-editor-background);
+      border: 1px solid var(--vscode-panel-border);
+      padding: 12px;
+      border-radius: 4px;
+      font-family: var(--vscode-editor-font-family);
+      font-size: 12px;
+      overflow-x: auto;
+      white-space: pre;
+      max-height: 200px;
+      overflow-y: auto;
+    }
+    .btn {
+      background: var(--vscode-button-background);
+      color: var(--vscode-button-foreground);
+      border: none;
+      padding: 8px 16px;
+      border-radius: 4px;
+      cursor: pointer;
+      margin-right: 8px;
+    }
+    .btn:hover {
+      background: var(--vscode-button-hoverBackground);
+    }
+    .meta {
+      font-size: 12px;
+      color: var(--vscode-descriptionForeground);
+      margin-top: 16px;
+    }
+  </style>
+</head>
+<body>
+  <h2>\u{1F9E0} CodeLens AI</h2>
+  
+  <div class="explanation">${this.escapeHtml(explanation)}</div>
+  
+  <button class="btn" onclick="copyExplanation()">\u{1F4CB} Copy Explanation</button>
+  
+  <h3>Code</h3>
+  <pre class="code-preview">${this.escapeHtml(code)}</pre>
+  
+  <p class="meta">Language: ${languageId}</p>
+  
+  <script>
+    const vscode = acquireVsCodeApi();
+    // Store raw explanation in JS variable to avoid HTML-escaping issues when copying
+    const rawExplanation = ${rawExplanationJson};
+    
+    function copyExplanation() {
+      vscode.postMessage({ command: 'copy', text: rawExplanation });
+    }
+  </script>
+</body>
+</html>`;
+  }
+  escapeHtml(text) {
+    return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+  }
+  dispose() {
+    this.panel?.dispose();
+    this.disposables.forEach((d2) => d2.dispose());
+  }
+};
+
+// src/managers/prototypeManager.ts
+var PrototypeManager = class {
+  constructor(context) {
+    this.context = context;
+    this.statusBarItem = vscode10.window.createStatusBarItem(
+      vscode10.StatusBarAlignment.Right,
+      99
+    );
+    this.statusBarItem.command = "codelens-ai.prototype.selectMode";
+    this.disposables.push(this.statusBarItem);
+    this.initializeProviders();
+    this.registerCommands();
+    this.loadConfiguration();
+    this.disposables.push(
+      vscode10.workspace.onDidChangeConfiguration((e2) => {
+        if (e2.affectsConfiguration("codelensAI.prototype")) {
+          this.loadConfiguration();
+        }
+      })
+    );
+  }
+  disposables = [];
+  // Provider instances
+  codeLensProvider = null;
+  peekProvider = null;
+  quickPeekProvider = null;
+  inlinePeekProvider = null;
+  sidePanelProvider = null;
+  floatingPanelProvider = null;
+  // Registration disposables (for toggling providers)
+  codeLensRegistration = null;
+  // Current active mode
+  currentMode = "hover";
+  // Status bar item for showing current mode
+  statusBarItem;
+  /**
+   * Initializes all provider instances.
+   */
+  initializeProviders() {
+    this.codeLensProvider = new CodeLensExplainProvider();
+    this.peekProvider = new PeekExplanationProvider();
+    this.quickPeekProvider = new QuickPeekProvider();
+    this.inlinePeekProvider = new InlinePeekProvider();
+    this.sidePanelProvider = new SidePanelProvider(this.context.extensionUri);
+    this.floatingPanelProvider = new FloatingPanelProvider(
+      this.context.extensionUri
+    );
+    const sidePanelRegistration = vscode10.window.registerWebviewViewProvider(
+      SidePanelProvider.viewType,
+      this.sidePanelProvider
+    );
+    this.disposables.push(sidePanelRegistration);
+    this.disposables.push(
+      this.codeLensProvider,
+      this.peekProvider,
+      this.quickPeekProvider,
+      this.inlinePeekProvider,
+      this.sidePanelProvider,
+      this.floatingPanelProvider
+    );
+  }
+  /**
+   * Registers all commands for the prototype manager.
+   */
+  registerCommands() {
+    const commands7 = [
+      // Mode selection
+      vscode10.commands.registerCommand(
+        "codelens-ai.prototype.selectMode",
+        () => this.showModeSelector()
+      ),
+      vscode10.commands.registerCommand(
+        "codelens-ai.prototype.setMode",
+        (mode) => this.setMode(mode)
+      ),
+      // CodeLens commands
+      vscode10.commands.registerCommand(
+        "codelens-ai.explainCodeLens",
+        (code, context, languageId) => this.codeLensProvider?.handleExplainClick(code, context, languageId)
+      ),
+      vscode10.commands.registerCommand(
+        "codelens-ai.showExplanation",
+        (explanation, code) => this.codeLensProvider?.showExplanation(explanation, code)
+      ),
+      // Peek explanation command (opens in VS Code peek view)
+      vscode10.commands.registerCommand(
+        "codelens-ai.peekExplanation",
+        () => this.peekProvider?.showPeekExplanation()
+      ),
+      // Quick peek command
+      vscode10.commands.registerCommand(
+        "codelens-ai.quickPeek",
+        () => this.quickPeekProvider?.showQuickPeek()
+      ),
+      // Inline peek command
+      vscode10.commands.registerCommand(
+        "codelens-ai.inlinePeek",
+        () => this.inlinePeekProvider?.showInlinePeek()
+      ),
+      // Side panel command
+      vscode10.commands.registerCommand(
+        "codelens-ai.explainInPanel",
+        () => this.sidePanelProvider?.explainCurrentSelection()
+      ),
+      // Floating panel command
+      vscode10.commands.registerCommand(
+        "codelens-ai.explainFloating",
+        (code, context) => this.floatingPanelProvider?.showExplanation(code, context)
+      ),
+      // Toggle commands
+      vscode10.commands.registerCommand(
+        "codelens-ai.prototype.toggleCodeLens",
+        () => this.toggleCodeLens()
+      )
+    ];
+    this.disposables.push(...commands7);
+  }
+  /**
+   * Loads configuration and applies the active mode.
+   * Only reads config - does not write back to avoid recursive change events.
+   */
+  loadConfiguration() {
+    const config = vscode10.workspace.getConfiguration("codelensAI.prototype");
+    const mode = config.get("mode", "hover");
+    this.applyMode(mode);
+  }
+  /**
+   * Shows a quick pick to select the UI mode.
+   */
+  async showModeSelector() {
+    const items = [
+      {
+        label: "$(comment-discussion) Hover",
+        description: "Original hover tooltips (merged with VS Code)",
+        detail: "Shows explanations in native VS Code hover. May conflict with other hovers.",
+        mode: "hover",
+        picked: this.currentMode === "hover"
+      },
+      {
+        label: "$(symbol-method) CodeLens",
+        description: "Inline clickable annotations",
+        detail: "Shows 'Explain' links above functions/classes. Click to see explanation.",
+        mode: "codelens",
+        picked: this.currentMode === "codelens"
+      },
+      {
+        label: "$(eye) Peek View",
+        description: "Peek definition-style overlay",
+        detail: "Opens explanation in VS Code's peek view. Use Go to Definition shortcut.",
+        mode: "peek",
+        picked: this.currentMode === "peek"
+      },
+      {
+        label: "$(zap) Quick Peek",
+        description: "Fast modal explanation",
+        detail: "Shows explanation in a quick pick modal. Fast and keyboard-friendly.",
+        mode: "quickpeek",
+        picked: this.currentMode === "quickpeek"
+      },
+      {
+        label: "$(lightbulb) Inline Peek",
+        description: "Inline decoration below code",
+        detail: "Shows explanation as inline text below the hovered line.",
+        mode: "inlinepeek",
+        picked: this.currentMode === "inlinepeek"
+      },
+      {
+        label: "$(layout-sidebar-right) Side Panel",
+        description: "Persistent sidebar webview",
+        detail: "Rich UI in the sidebar with history. Best for detailed exploration.",
+        mode: "sidepanel",
+        picked: this.currentMode === "sidepanel"
+      },
+      {
+        label: "$(window) Floating Panel",
+        description: "Webview panel beside editor",
+        detail: "Opens explanation in a panel next to your code.",
+        mode: "floatingpanel",
+        picked: this.currentMode === "floatingpanel"
+      },
+      {
+        label: "$(layers) Hybrid",
+        description: "CodeLens + Side Panel",
+        detail: "Combines CodeLens annotations with the side panel for detailed views.",
+        mode: "hybrid",
+        picked: this.currentMode === "hybrid"
+      }
+    ];
+    const selection = await vscode10.window.showQuickPick(items, {
+      title: "\u{1F9E0} CodeLens AI - Select UI Mode",
+      placeHolder: `Current mode: ${this.currentMode}`
+    });
+    if (selection) {
+      await this.setMode(selection.mode);
+      vscode10.window.showInformationMessage(
+        `CodeLens AI mode set to: ${selection.label.replace(
+          /\$\([^)]+\)\s*/,
+          ""
+        )}`
+      );
+    }
+  }
+  /**
+   * Sets the active UI mode and persists to configuration.
+   * Call this for user-initiated mode changes only.
+   */
+  async setMode(mode) {
+    const config = vscode10.workspace.getConfiguration("codelensAI.prototype");
+    const storedMode = config.get("mode");
+    this.applyMode(mode);
+    if (storedMode !== mode) {
+      await config.update("mode", mode, vscode10.ConfigurationTarget.Global);
+    }
+  }
+  /**
+   * Applies the UI mode without persisting to configuration.
+   * Used internally for both loading config and user-initiated changes.
+   */
+  applyMode(mode) {
+    this.cleanupRegistrations();
+    this.currentMode = mode;
+    switch (mode) {
+      case "hover":
+        this.updateStatusBar("$(comment-discussion)", "Hover Mode");
+        break;
+      case "codelens":
+        this.enableCodeLensMode();
+        this.updateStatusBar("$(symbol-method)", "CodeLens Mode");
+        break;
+      case "peek":
+        this.enablePeekMode();
+        this.updateStatusBar("$(eye)", "Peek Mode");
+        break;
+      case "quickpeek":
+        this.updateStatusBar("$(zap)", "Quick Peek Mode");
+        break;
+      case "inlinepeek":
+        this.updateStatusBar("$(lightbulb)", "Inline Peek Mode");
+        break;
+      case "sidepanel":
+        this.updateStatusBar("$(layout-sidebar-right)", "Side Panel Mode");
+        vscode10.commands.executeCommand("codelens-ai.explanationPanel.focus");
+        break;
+      case "floatingpanel":
+        this.updateStatusBar("$(window)", "Floating Panel Mode");
+        break;
+      case "hybrid":
+        this.enableCodeLensMode();
+        this.updateStatusBar("$(layers)", "Hybrid Mode");
+        break;
+    }
+  }
+  /**
+   * Enables CodeLens mode by registering the CodeLens provider.
+   */
+  enableCodeLensMode() {
+    if (!this.codeLensProvider)
+      return;
+    this.codeLensRegistration = vscode10.languages.registerCodeLensProvider(
+      [{ scheme: "file" }, { scheme: "untitled" }],
+      this.codeLensProvider
+    );
+  }
+  /**
+   * Enables Peek mode.
+   * Peek is now command-based (codelens-ai.peekExplanation) to avoid
+   * intercepting Go to Definition. No provider registration needed.
+   */
+  enablePeekMode() {
+  }
+  /**
+   * Toggles CodeLens on/off regardless of current mode.
+   */
+  toggleCodeLens() {
+    if (this.codeLensRegistration) {
+      this.codeLensRegistration.dispose();
+      this.codeLensRegistration = null;
+      vscode10.window.showInformationMessage("CodeLens explanations disabled");
+    } else {
+      this.enableCodeLensMode();
+      vscode10.window.showInformationMessage("CodeLens explanations enabled");
+    }
+  }
+  /**
+   * Cleans up all provider registrations.
+   */
+  cleanupRegistrations() {
+    this.codeLensRegistration?.dispose();
+    this.codeLensRegistration = null;
+  }
+  /**
+   * Updates the status bar item.
+   */
+  updateStatusBar(icon, tooltip) {
+    this.statusBarItem.text = `${icon} AI Mode`;
+    this.statusBarItem.tooltip = `CodeLens AI: ${tooltip}
+Click to change mode`;
+    this.statusBarItem.show();
+  }
+  /**
+   * Gets the current active mode.
+   */
+  getMode() {
+    return this.currentMode;
+  }
+  /**
+   * Triggers explanation based on current mode.
+   */
+  async explain() {
+    switch (this.currentMode) {
+      case "quickpeek":
+        await this.quickPeekProvider?.showQuickPeek();
+        break;
+      case "inlinepeek":
+        await this.inlinePeekProvider?.showInlinePeek();
+        break;
+      case "sidepanel":
+        await this.sidePanelProvider?.explainCurrentSelection();
+        break;
+      case "floatingpanel":
+        await this.floatingPanelProvider?.showExplanation();
+        break;
+      case "hybrid":
+        await this.sidePanelProvider?.explainCurrentSelection();
+        break;
+      default:
+        vscode10.window.showInformationMessage(
+          `In ${this.currentMode} mode, hover over code or use the CodeLens links.`
+        );
+    }
+  }
+  dispose() {
+    this.cleanupRegistrations();
+    this.disposables.forEach((d2) => d2.dispose());
+  }
+};
+
+// src/experimental/experimentExtension.ts
+var vscode12 = __toESM(require("vscode"));
+
+// src/experimental/experimentalHoverProviders.ts
+var vscode11 = __toESM(require("vscode"));
+var NullReturningHoverProvider = class {
+  provideHover(document, position, _token) {
+    console.log(
+      "[Experiment 1] NullReturningHoverProvider called at",
+      position.line,
+      position.character
+    );
+    return null;
+  }
+};
+var AlwaysReturnHoverProvider = class {
+  provideHover(document, position, _token) {
+    console.log(
+      "[Experiment 2] AlwaysReturnHoverProvider called at",
+      position.line,
+      position.character
+    );
+    const lineText = document.lineAt(position.line).text;
+    if (lineText.trim().length > 0) {
+      const md = new vscode11.MarkdownString();
+      md.appendMarkdown("**\u{1F9EA} Experiment 2: Custom Hover**\n\n");
+      md.appendMarkdown(
+        `Line ${position.line + 1}, Column ${position.character + 1}`
+      );
+      return new vscode11.Hover(md);
+    }
+    return null;
+  }
+};
+var ConditionalHoverProvider = class {
+  provideHover(document, position, _token) {
+    const lineText = document.lineAt(position.line).text;
+    console.log(
+      "[Experiment 3] ConditionalHoverProvider called at",
+      position.line,
+      position.character
+    );
+    const trimmedLine = lineText.trim();
+    if (trimmedLine.startsWith("function ") || trimmedLine.startsWith("const ") || trimmedLine.startsWith("class ") || trimmedLine.startsWith("export ")) {
+      const md = new vscode11.MarkdownString();
+      md.appendMarkdown("**\u{1F9EA} Experiment 3: Conditional Match**\n\n");
+      md.appendMarkdown(`Matched pattern on line ${position.line + 1}`);
+      return new vscode11.Hover(md);
+    }
+    return null;
+  }
+};
+var FirstHoverProvider = class {
+  provideHover(document, position, _token) {
+    console.log(
+      "[Experiment 4a] FirstHoverProvider called at",
+      position.line,
+      position.character
+    );
+    const lineText = document.lineAt(position.line).text;
+    if (lineText.trim().length > 0) {
+      const md = new vscode11.MarkdownString();
+      md.appendMarkdown("**\u{1F947} First Provider**\n\n");
+      md.appendMarkdown("Registered first in the chain.");
+      return new vscode11.Hover(md);
+    }
+    return null;
+  }
+};
+var SecondHoverProvider = class {
+  provideHover(document, position, _token) {
+    console.log(
+      "[Experiment 4b] SecondHoverProvider called at",
+      position.line,
+      position.character
+    );
+    const lineText = document.lineAt(position.line).text;
+    if (lineText.trim().length > 0) {
+      const md = new vscode11.MarkdownString();
+      md.appendMarkdown("**\u{1F948} Second Provider**\n\n");
+      md.appendMarkdown("Registered second in the chain.");
+      return new vscode11.Hover(md);
+    }
+    return null;
+  }
+};
+var ThirdHoverProvider = class {
+  provideHover(document, position, _token) {
+    console.log(
+      "[Experiment 4c] ThirdHoverProvider called at",
+      position.line,
+      position.character
+    );
+    const lineText = document.lineAt(position.line).text;
+    if (lineText.includes("import") || lineText.includes("export")) {
+      const md = new vscode11.MarkdownString();
+      md.appendMarkdown("**\u{1F949} Third Provider (Conditional)**\n\n");
+      md.appendMarkdown("Only shows for import/export statements.");
+      return new vscode11.Hover(md);
+    }
+    return null;
+  }
+};
+var HighPriorityHoverProvider = class {
+  provideHover(document, position, _token) {
+    console.log(
+      "[Experiment 5] HighPriorityHoverProvider called at",
+      position.line,
+      position.character
+    );
+    const lineText = document.lineAt(position.line).text;
+    if (lineText.trim().length > 0) {
+      const md = new vscode11.MarkdownString();
+      md.appendMarkdown("**\u26A1 High Priority Provider**\n\n");
+      md.appendMarkdown("Registered with high priority intent.");
+      return new vscode11.Hover(md);
+    }
+    return null;
+  }
+};
+var AsyncHoverProvider = class {
+  async provideHover(document, position, _token) {
+    console.log(
+      "[Experiment 6] AsyncHoverProvider called at",
+      position.line,
+      position.character
+    );
+    const lineText = document.lineAt(position.line).text;
+    if (lineText.trim().length === 0)
+      return null;
+    await new Promise((resolve) => {
+      const timeout = setTimeout(() => resolve(), 500);
+      _token.onCancellationRequested(() => {
+        clearTimeout(timeout);
+        resolve();
+      });
+    });
+    if (_token.isCancellationRequested) {
+      console.log("[Experiment 6] Cancelled during async wait");
+      return null;
+    }
+    const md = new vscode11.MarkdownString();
+    md.appendMarkdown("**\u23F1\uFE0F Async Provider**\n\n");
+    md.appendMarkdown("This provider waited 500ms before responding.");
+    return new vscode11.Hover(md);
+  }
+};
+var UndefinedReturningHoverProvider = class {
+  provideHover(document, position, _token) {
+    console.log(
+      "[Experiment 7] UndefinedReturningHoverProvider called at",
+      position.line,
+      position.character
+    );
+    return void 0;
+  }
+};
+var EmptyContentHoverProvider = class {
+  provideHover(document, position, _token) {
+    console.log(
+      "[Experiment 8] EmptyContentHoverProvider called at",
+      position.line,
+      position.character
+    );
+    const lineText = document.lineAt(position.line).text;
+    if (lineText.trim().length > 0) {
+      return new vscode11.Hover(new vscode11.MarkdownString(""));
+    }
+    return null;
+  }
+};
+function getExperimentalProviders(mode) {
+  switch (mode) {
+    case "null-returning":
+      return [new NullReturningHoverProvider()];
+    case "always-return":
+      return [new AlwaysReturnHoverProvider()];
+    case "conditional":
+      return [new ConditionalHoverProvider()];
+    case "multi-provider":
+      return [
+        new FirstHoverProvider(),
+        new SecondHoverProvider(),
+        new ThirdHoverProvider()
+      ];
+    case "async":
+      return [
+        new FirstHoverProvider(),
+        new AsyncHoverProvider(),
+        new SecondHoverProvider()
+      ];
+    case "undefined":
+      return [new UndefinedReturningHoverProvider()];
+    case "empty-content":
+      return [new EmptyContentHoverProvider()];
+    case "registration-order-high-first":
+      console.log("[Experiment 5a] Order: High \u2192 First \u2192 Second");
+      return [
+        new HighPriorityHoverProvider(),
+        new FirstHoverProvider(),
+        new SecondHoverProvider()
+      ];
+    case "registration-order-high-last":
+      console.log("[Experiment 5b] Order: First \u2192 Second \u2192 High");
+      return [
+        new FirstHoverProvider(),
+        new SecondHoverProvider(),
+        new HighPriorityHoverProvider()
+      ];
+    case "registration-order-first-second-high":
+      console.log("[Experiment 5c] Order: First \u2192 High \u2192 Second");
+      return [
+        new FirstHoverProvider(),
+        new HighPriorityHoverProvider(),
+        new SecondHoverProvider()
+      ];
+    default:
+      return [];
+  }
+}
+
+// src/experimental/experimentExtension.ts
+var HOVER_SELECTOR = [
+  { scheme: "file" },
+  { scheme: "untitled" }
+];
+var experimentDisposables = [];
+var currentMode = null;
+var statusBarItem = null;
+function clearExperiments() {
+  experimentDisposables.forEach((d2) => d2.dispose());
+  experimentDisposables = [];
+  currentMode = null;
+  updateStatusBar();
+  console.log("[Experiment] All experimental providers cleared");
+}
+function runExperiment(mode) {
+  clearExperiments();
+  const providers = getExperimentalProviders(mode);
+  providers.forEach((provider, index) => {
+    const disposable = vscode12.languages.registerHoverProvider(
+      HOVER_SELECTOR,
+      provider
+    );
+    experimentDisposables.push(disposable);
+    console.log(`[Experiment] Registered provider ${index + 1} for mode: ${mode}`);
+  });
+  currentMode = mode;
+  updateStatusBar();
+  vscode12.window.showInformationMessage(
+    `\u{1F9EA} Experiment "${mode}" active with ${providers.length} provider(s). Check console for logs.`
+  );
+}
+function updateStatusBar() {
+  if (!statusBarItem)
+    return;
+  if (currentMode) {
+    statusBarItem.text = `$(beaker) Exp: ${currentMode}`;
+    statusBarItem.tooltip = `Hover Experiment Mode: ${currentMode}
+Click to change or stop`;
+    statusBarItem.backgroundColor = new vscode12.ThemeColor("statusBarItem.warningBackground");
+  } else {
+    statusBarItem.text = "$(beaker) No Experiment";
+    statusBarItem.tooltip = "No hover experiment running. Click to start one.";
+    statusBarItem.backgroundColor = void 0;
+  }
+}
+async function showExperimentMenu() {
+  const items = [
+    {
+      label: "$(circle-slash) Stop Experiment",
+      description: "Clear all experimental providers",
+      detail: "Removes all experimental hover providers, allowing only VS Code defaults"
+    },
+    { kind: vscode12.QuickPickItemKind.Separator, label: "Experiments" },
+    {
+      label: "1. Null Returning",
+      description: "Test: Does returning null allow VS Code defaults?",
+      detail: "Always returns null from provideHover()"
+    },
+    {
+      label: "2. Always Return Hover",
+      description: "Test: Does returning Hover suppress defaults?",
+      detail: "Always returns a Hover object for non-empty lines"
+    },
+    {
+      label: "3. Conditional Hover",
+      description: "Test: Selective hover on patterns",
+      detail: "Returns Hover for function/const/class/export, null otherwise"
+    },
+    {
+      label: "4. Multi-Provider",
+      description: "Test: Are multiple hover providers additive?",
+      detail: "Registers 3 providers to see if hovers combine"
+    },
+    {
+      label: "5a. Registration Order (High First)",
+      description: "Test: High \u2192 First \u2192 Second",
+      detail: "High priority provider registered first"
+    },
+    {
+      label: "5b. Registration Order (High Last)",
+      description: "Test: First \u2192 Second \u2192 High",
+      detail: "High priority provider registered last"
+    },
+    {
+      label: "5c. Registration Order (Mixed)",
+      description: "Test: First \u2192 High \u2192 Second",
+      detail: "High priority provider in the middle"
+    },
+    {
+      label: "6. Async Provider",
+      description: "Test: How does VS Code handle async providers?",
+      detail: "Includes a 500ms delay provider in the chain"
+    },
+    {
+      label: "7. Undefined Return",
+      description: "Test: undefined vs null behavior",
+      detail: "Returns undefined instead of null"
+    },
+    {
+      label: "8. Empty Content",
+      description: "Test: Hover with empty markdown",
+      detail: "Returns Hover with empty MarkdownString"
+    }
+  ];
+  const selection = await vscode12.window.showQuickPick(items, {
+    placeHolder: "Select an experiment to run",
+    title: "\u{1F9EA} Hover Provider Experiments"
+  });
+  if (!selection)
+    return;
+  if (selection.label.includes("Stop Experiment")) {
+    clearExperiments();
+    vscode12.window.showInformationMessage("\u{1F9EA} Experiment stopped. Only VS Code defaults active.");
+    return;
+  }
+  const match = selection.label.match(/^(\d+[a-z]?)\./);
+  if (!match)
+    return;
+  const modeMap = {
+    "1": "null-returning",
+    "2": "always-return",
+    "3": "conditional",
+    "4": "multi-provider",
+    "5a": "registration-order-high-first",
+    "5b": "registration-order-high-last",
+    "5c": "registration-order-first-second-high",
+    "6": "async",
+    "7": "undefined",
+    "8": "empty-content"
+  };
+  const mode = modeMap[match[1]];
+  if (mode) {
+    runExperiment(mode);
+  }
+}
+function logExperimentStatus() {
+  console.log("=== Hover Experiment Status ===");
+  console.log(`Mode: ${currentMode ?? "None"}`);
+  console.log(`Active providers: ${experimentDisposables.length}`);
+  console.log("===============================");
+  vscode12.window.showInformationMessage(
+    `Current experiment: ${currentMode ?? "None"} (${experimentDisposables.length} providers)`
+  );
+}
+function activateExperiments(context) {
+  statusBarItem = vscode12.window.createStatusBarItem(
+    vscode12.StatusBarAlignment.Left,
+    100
+  );
+  statusBarItem.command = "codelens-ai.experiment.menu";
+  updateStatusBar();
+  statusBarItem.show();
+  context.subscriptions.push(statusBarItem);
+  context.subscriptions.push({
+    dispose: () => clearExperiments()
+  });
+  console.log("[Experiment] Hover experiment module activated");
+}
+function deactivateExperiments() {
+  clearExperiments();
+  statusBarItem?.dispose();
+  statusBarItem = null;
+}
+
 // src/extension.ts
-var HOVER_SELECTOR = [{ scheme: "file" }, { scheme: "untitled" }];
+var HOVER_SELECTOR2 = [{ scheme: "file" }, { scheme: "untitled" }];
 var stateManager;
 var menuManager;
 var statusBarManager;
+var prototypeManager;
 var hoverRegistrationDisposable;
 function activate(context) {
   const hoverProvider = new CodeLensHoverProvider();
@@ -17260,8 +19232,8 @@ function activate(context) {
   statusBarManager = sbm;
   context.subscriptions.push(sm, mm, sbm, hoverProvider);
   function registerHover() {
-    return vscode7.languages.registerHoverProvider(
-      HOVER_SELECTOR,
+    return vscode13.languages.registerHoverProvider(
+      HOVER_SELECTOR2,
       hoverProvider
     );
   }
@@ -17285,18 +19257,18 @@ function activate(context) {
   context.subscriptions.push(stateChangeSubscription);
   sbm.registerClickHandler(context);
   sbm.show();
-  const commandDisposable = vscode7.commands.registerCommand(
+  const commandDisposable = vscode13.commands.registerCommand(
     "codelens-ai.explainCode",
     (code, ctx) => {
       void hoverProvider.explainCode(code, ctx);
     }
   );
   context.subscriptions.push(commandDisposable);
-  const welcomeSubscription = vscode7.workspace.onDidOpenTextDocument(() => {
+  const welcomeSubscription = vscode13.workspace.onDidOpenTextDocument(() => {
     if (sm.hasShownWelcome())
       return;
     const message = "\u{1F44B} Welcome to CodeLens AI! Click the icon in the status bar to configure your AI provider and get started.";
-    void vscode7.window.showInformationMessage(message, "Configure Now").then((selection) => {
+    void vscode13.window.showInformationMessage(message, "Configure Now").then((selection) => {
       void sm.markWelcomeShown();
       if (selection === "Configure Now") {
         mm.showMainMenu();
@@ -17304,12 +19276,90 @@ function activate(context) {
     });
   });
   context.subscriptions.push(welcomeSubscription);
+  const config = vscode13.workspace.getConfiguration("codelensAI");
+  const experimentsEnabled = config.get("enableExperiments", false);
+  if (experimentsEnabled) {
+    activateExperiments(context);
+  }
+  const experimentDisabledMessage = 'Experiments are disabled. Enable them in settings: "codelensAI.enableExperiments": true';
+  function isExperimentsEnabled() {
+    return vscode13.workspace.getConfiguration("codelensAI").get("enableExperiments", false);
+  }
+  const experimentMenuCommand = vscode13.commands.registerCommand(
+    "codelens-ai.experiment.menu",
+    () => {
+      if (!isExperimentsEnabled()) {
+        void vscode13.window.showInformationMessage(experimentDisabledMessage);
+        return;
+      }
+      void showExperimentMenu();
+    }
+  );
+  const experimentStopCommand = vscode13.commands.registerCommand(
+    "codelens-ai.experiment.stop",
+    () => {
+      if (!isExperimentsEnabled()) {
+        void vscode13.window.showInformationMessage(experimentDisabledMessage);
+        return;
+      }
+      clearExperiments();
+      void vscode13.window.showInformationMessage("\u{1F9EA} Experiment stopped.");
+    }
+  );
+  const experimentStatusCommand = vscode13.commands.registerCommand(
+    "codelens-ai.experiment.status",
+    () => {
+      if (!isExperimentsEnabled()) {
+        void vscode13.window.showInformationMessage(experimentDisabledMessage);
+        return;
+      }
+      logExperimentStatus();
+    }
+  );
+  const experimentModes = [
+    "null-returning",
+    "always-return",
+    "conditional",
+    "multi-provider",
+    "registration-order-high-first",
+    "registration-order-high-last",
+    "registration-order-first-second-high",
+    "async",
+    "undefined",
+    "empty-content"
+  ];
+  const experimentRunCommands = experimentModes.map(
+    (mode) => vscode13.commands.registerCommand(`codelens-ai.experiment.run.${mode}`, () => {
+      if (!isExperimentsEnabled()) {
+        void vscode13.window.showInformationMessage(experimentDisabledMessage);
+        return;
+      }
+      runExperiment(mode);
+    })
+  );
+  context.subscriptions.push(
+    experimentMenuCommand,
+    experimentStopCommand,
+    experimentStatusCommand,
+    ...experimentRunCommands
+  );
+  const prototypesEnabled = config.get(
+    "prototype.enablePrototypes",
+    false
+  );
+  if (prototypesEnabled) {
+    prototypeManager = new PrototypeManager(context);
+    context.subscriptions.push(prototypeManager);
+  }
 }
 function deactivate() {
+  deactivateExperiments();
   if (hoverRegistrationDisposable) {
     hoverRegistrationDisposable.dispose();
     hoverRegistrationDisposable = void 0;
   }
+  prototypeManager?.dispose();
+  prototypeManager = void 0;
   statusBarManager?.dispose();
   statusBarManager = void 0;
   menuManager?.dispose();

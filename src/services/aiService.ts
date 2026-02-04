@@ -15,7 +15,7 @@ export interface AIConfig {
  * calls can be aborted when the user cancels (e.g. moves the cursor away from hover).
  */
 function cancellationTokenToAbortSignal(
-  token?: vscode.CancellationToken,
+  token?: vscode.CancellationToken
 ): AbortSignal | undefined {
   if (!token) return undefined;
   if (token.isCancellationRequested) return AbortSignal.abort();
@@ -49,7 +49,7 @@ export class AIService {
     code: string,
     lang: string,
     context?: string,
-    cancellationToken?: vscode.CancellationToken,
+    cancellationToken?: vscode.CancellationToken
   ): Promise<string> {
     const cfg = this.getConfig();
 
@@ -76,14 +76,14 @@ export class AIService {
             cfg.model,
             cfg.apiKey,
             cfg.apiBase,
-            signal,
+            signal
           );
         case "ollama":
           return await this.callOllama(
             prompt,
             cfg.model,
             cfg.ollamaEndpoint,
-            signal,
+            signal
           );
         default:
           return `Unknown provider: ${cfg.provider}. Use openai, anthropic, or ollama.`;
@@ -146,7 +146,7 @@ export class AIService {
     // 2. Message-pattern detection (network, timeout, DNS, etc.)
     if (
       /econnrefused|econnreset|enotfound|network|fetch failed|failed to fetch/i.test(
-        msgLower,
+        msgLower
       ) ||
       (error instanceof TypeError && msgLower.includes("fetch"))
     ) {
@@ -159,7 +159,7 @@ export class AIService {
     }
     if (
       /unauthorized|invalid.*api.*key|authentication|invalid key|401|403/i.test(
-        msgLower,
+        msgLower
       )
     ) {
       return hasApiBase
@@ -189,25 +189,25 @@ export class AIService {
     const contextBlock = context
       ? `\n\nSurrounding context (for reference only):\n\`\`\`\n${context}\n\`\`\``
       : "";
-    return `Explain this code in ONE short sentence. Like you're texting a friend who just started coding.
+    return `Explain the following ${lang} code concisely.
 
-      Rules:
-      - Max 15 words
-      - No jargon
-      - Casual tone
-      
-      Example: \`arr.filter(x => x > 0)\` → "Keeps only the positive numbers, tosses the rest."
-      
-      \`\`\`
-      ${code}
-      \`\`\`${contextBlock}`;
+Your explanation should:
+- What: Describe what the code does in 1-2 sentences
+- Why: Explain why it might exist or its purpose
+- Patterns: Note any notable patterns or techniques used
+
+Keep your explanation brief but insightful. Do not repeat the code back.
+
+\`\`\`${lang}
+${code}
+\`\`\`${contextBlock}`;
   }
 
   private async callOpenAI(
     prompt: string,
     model: string,
     apiKey: string,
-    signal?: AbortSignal,
+    signal?: AbortSignal
   ): Promise<string> {
     const client = new OpenAI({ apiKey });
     const completion = await client.chat.completions.create(
@@ -215,7 +215,7 @@ export class AIService {
         model,
         messages: [{ role: "user", content: prompt }],
       },
-      { signal: signal ?? undefined },
+      { signal: signal ?? undefined }
     );
     const content = completion.choices[0]?.message?.content;
     if (content == null || content === "") {
@@ -229,7 +229,7 @@ export class AIService {
     model: string,
     apiKey: string,
     apiBase: string,
-    signal?: AbortSignal,
+    signal?: AbortSignal
   ): Promise<string> {
     const client = new Anthropic({
       apiKey,
@@ -241,7 +241,7 @@ export class AIService {
         max_tokens: 1024,
         messages: [{ role: "user", content: prompt }],
       },
-      { signal: signal ?? undefined },
+      { signal: signal ?? undefined }
     );
     for (const block of message.content) {
       if (
@@ -259,7 +259,7 @@ export class AIService {
     prompt: string,
     model: string,
     endpoint: string,
-    signal?: AbortSignal,
+    signal?: AbortSignal
   ): Promise<string> {
     const base = endpoint.replace(/\/$/, "");
     const url = `${base}/api/generate`;

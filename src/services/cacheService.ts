@@ -44,6 +44,15 @@ export class CacheService {
     });
   }
 
+  /**
+   * Deletes a single cache entry for the given code.
+   * Use this for targeted invalidation (e.g., refresh) instead of clear().
+   */
+  delete(code: string): void {
+    const key = this.generateKey(code);
+    this.cache.delete(key);
+  }
+
   clear(): void {
     this.cache.clear();
   }

@@ -41,6 +41,106 @@
       {
         "command": "codelens-ai.statusBarClick",
         "title": "CodeLens AI: Show Menu"
+      },
+      {
+        "command": "codelens-ai.prototype.selectMode",
+        "title": "CodeLens AI: Select UI Mode"
+      },
+      {
+        "command": "codelens-ai.quickPeek",
+        "title": "CodeLens AI: Quick Peek Explanation"
+      },
+      {
+        "command": "codelens-ai.inlinePeek",
+        "title": "CodeLens AI: Inline Peek Explanation"
+      },
+      {
+        "command": "codelens-ai.explainInPanel",
+        "title": "CodeLens AI: Explain in Side Panel"
+      },
+      {
+        "command": "codelens-ai.explainFloating",
+        "title": "CodeLens AI: Explain in Floating Panel"
+      },
+      {
+        "command": "codelens-ai.prototype.toggleCodeLens",
+        "title": "CodeLens AI: Toggle CodeLens Annotations"
+      },
+      {
+        "command": "codelens-ai.experiment.menu",
+        "title": "CodeLens AI: Hover Experiments Menu"
+      },
+      {
+        "command": "codelens-ai.experiment.stop",
+        "title": "CodeLens AI: Stop Hover Experiment"
+      },
+      {
+        "command": "codelens-ai.experiment.status",
+        "title": "CodeLens AI: Show Experiment Status"
+      },
+      {
+        "command": "codelens-ai.experiment.run.null-returning",
+        "title": "CodeLens AI: Run Experiment - Null Returning"
+      },
+      {
+        "command": "codelens-ai.experiment.run.always-return",
+        "title": "CodeLens AI: Run Experiment - Always Return Hover"
+      },
+      {
+        "command": "codelens-ai.experiment.run.conditional",
+        "title": "CodeLens AI: Run Experiment - Conditional Hover"
+      },
+      {
+        "command": "codelens-ai.experiment.run.multi-provider",
+        "title": "CodeLens AI: Run Experiment - Multi Provider"
+      },
+      {
+        "command": "codelens-ai.experiment.run.registration-order-high-first",
+        "title": "CodeLens AI: Run Experiment - Registration Order (High First)"
+      },
+      {
+        "command": "codelens-ai.experiment.run.registration-order-high-last",
+        "title": "CodeLens AI: Run Experiment - Registration Order (High Last)"
+      },
+      {
+        "command": "codelens-ai.experiment.run.registration-order-first-second-high",
+        "title": "CodeLens AI: Run Experiment - Registration Order (Mixed)"
+      },
+      {
+        "command": "codelens-ai.experiment.run.async",
+        "title": "CodeLens AI: Run Experiment - Async Provider"
+      },
+      {
+        "command": "codelens-ai.experiment.run.undefined",
+        "title": "CodeLens AI: Run Experiment - Undefined Return"
+      },
+      {
+        "command": "codelens-ai.experiment.run.empty-content",
+        "title": "CodeLens AI: Run Experiment - Empty Content"
+      }
+    ],
+    "views": {
+      "explorer": [
+        {
+          "type": "webview",
+          "id": "codelens-ai.explanationPanel",
+          "name": "CodeLens AI",
+          "when": "codelensAI.prototype.sidePanelEnabled"
+        }
+      ]
+    },
+    "keybindings": [
+      {
+        "command": "codelens-ai.quickPeek",
+        "key": "ctrl+shift+e",
+        "mac": "cmd+shift+e",
+        "when": "editorTextFocus"
+      },
+      {
+        "command": "codelens-ai.explainInPanel",
+        "key": "ctrl+shift+alt+e",
+        "mac": "cmd+shift+alt+e",
+        "when": "editorTextFocus"
       }
     ],
     "configuration": {
@@ -80,6 +180,46 @@
           "type": "string",
           "default": "",
           "description": "Background color for the hover-highlighted code block (e.g. \"rgba(0, 128, 128, 0.2)\"). Leave empty to use theme-aware defaults (dark: teal 15%, light: teal 25%, high-contrast: white 10%)."
+        },
+        "codelensAI.enableExperiments": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable experimental hover provider testing module. Only enable for development/testing purposes."
+        },
+        "codelensAI.prototype.mode": {
+          "type": "string",
+          "enum": [
+            "hover",
+            "codelens",
+            "peek",
+            "quickpeek",
+            "inlinepeek",
+            "sidepanel",
+            "floatingpanel",
+            "hybrid"
+          ],
+          "default": "hybrid",
+          "enumDescriptions": [
+            "Original hover tooltips (merged with VS Code hovers)",
+            "Inline clickable annotations above code constructs",
+            "Peek definition-style overlay using virtual documents",
+            "Fast modal explanation using Quick Pick",
+            "Inline decoration below the hovered line",
+            "Persistent sidebar webview with history",
+            "Floating webview panel beside the editor",
+            "Combination of CodeLens + Side Panel"
+          ],
+          "description": "UI mode for displaying AI explanations. Each mode offers different trade-offs."
+        },
+        "codelensAI.prototype.sidePanelEnabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show the CodeLens AI panel in the Explorer sidebar."
+        },
+        "codelensAI.prototype.enablePrototypes": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable UI prototype alternatives (CodeLens, Peek View, Side Panel). Set to false to disable alternative UI modes."
         }
       }
     }

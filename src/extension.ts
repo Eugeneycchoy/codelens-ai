@@ -3,12 +3,23 @@ import { CodeLensHoverProvider } from "./providers/hoverProvider";
 import { StateManager } from "./managers/stateManager";
 import { MenuManager } from "./managers/menuManager";
 import { StatusBarManager } from "./managers/statusBarManager";
+import { PrototypeManager } from "./managers/prototypeManager";
+import {
+  activateExperiments,
+  deactivateExperiments,
+  showExperimentMenu,
+  clearExperiments,
+  logExperimentStatus,
+  runExperiment,
+  ExperimentMode,
+} from "./experimental/experimentExtension";
 
 const HOVER_SELECTOR = [{ scheme: "file" }, { scheme: "untitled" }];
 
 let stateManager: StateManager | undefined;
 let menuManager: MenuManager | undefined;
 let statusBarManager: StatusBarManager | undefined;
+let prototypeManager: PrototypeManager | undefined;
 let hoverRegistrationDisposable: vscode.Disposable | undefined;
 
 export function activate(context: vscode.ExtensionContext): void {
@@ -26,7 +37,7 @@ export function activate(context: vscode.ExtensionContext): void {
   function registerHover(): vscode.Disposable {
     return vscode.languages.registerHoverProvider(
       HOVER_SELECTOR,
-      hoverProvider,
+      hoverProvider
     );
   }
 
@@ -57,7 +68,7 @@ export function activate(context: vscode.ExtensionContext): void {
     "codelens-ai.explainCode",
     (code?: string, ctx?: string) => {
       void hoverProvider.explainCode(code, ctx);
-    },
+    }
   );
   context.subscriptions.push(commandDisposable);
 
@@ -75,13 +86,114 @@ export function activate(context: vscode.ExtensionContext): void {
       });
   });
   context.subscriptions.push(welcomeSubscription);
+
+  // Only activate experiments UI (status bar) when explicitly enabled via configuration
+  // This prevents the experimental status bar from showing to production users
+  const config = vscode.workspace.getConfiguration("codelensAI");
+  const experimentsEnabled = config.get<boolean>("enableExperiments", false);
+  if (experimentsEnabled) {
+    activateExperiments(context);
+  }
+
+  // Always register experiment commands so they don't cause "command not found" errors
+  // Handlers check config at runtime and show info message if experiments are disabled
+  const experimentDisabledMessage =
+    'Experiments are disabled. Enable them in settings: "codelensAI.enableExperiments": true';
+
+  function isExperimentsEnabled(): boolean {
+    return vscode.workspace
+      .getConfiguration("codelensAI")
+      .get<boolean>("enableExperiments", false);
+  }
+
+  const experimentMenuCommand = vscode.commands.registerCommand(
+    "codelens-ai.experiment.menu",
+    () => {
+      if (!isExperimentsEnabled()) {
+        void vscode.window.showInformationMessage(experimentDisabledMessage);
+        return;
+      }
+      void showExperimentMenu();
+    }
+  );
+
+  const experimentStopCommand = vscode.commands.registerCommand(
+    "codelens-ai.experiment.stop",
+    () => {
+      if (!isExperimentsEnabled()) {
+        void vscode.window.showInformationMessage(experimentDisabledMessage);
+        return;
+      }
+      clearExperiments();
+      void vscode.window.showInformationMessage("🧪 Experiment stopped.");
+    }
+  );
+
+  const experimentStatusCommand = vscode.commands.registerCommand(
+    "codelens-ai.experiment.status",
+    () => {
+      if (!isExperimentsEnabled()) {
+        void vscode.window.showInformationMessage(experimentDisabledMessage);
+        return;
+      }
+      logExperimentStatus();
+    }
+  );
+
+  // Register shortcut commands for each experiment mode
+  const experimentModes: ExperimentMode[] = [
+    "null-returning",
+    "always-return",
+    "conditional",
+    "multi-provider",
+    "registration-order-high-first",
+    "registration-order-high-last",
+    "registration-order-first-second-high",
+    "async",
+    "undefined",
+    "empty-content",
+  ];
+
+  const experimentRunCommands = experimentModes.map((mode) =>
+    vscode.commands.registerCommand(
+      `codelens-ai.experiment.run.${mode}`,
+      () => {
+        if (!isExperimentsEnabled()) {
+          void vscode.window.showInformationMessage(experimentDisabledMessage);
+          return;
+        }
+        runExperiment(mode);
+      }
+    )
+  );
+
+  context.subscriptions.push(
+    experimentMenuCommand,
+    experimentStopCommand,
+    experimentStatusCommand,
+    ...experimentRunCommands
+  );
+
+  // Activate UI prototypes by default (Hybrid mode: CodeLens + Side Panel)
+  // User can explicitly disable via codelensAI.prototype.enablePrototypes = false
+  const prototypesEnabled = config.get<boolean>(
+    "prototype.enablePrototypes",
+    true
+  );
+  if (prototypesEnabled) {
+    prototypeManager = new PrototypeManager(context);
+    context.subscriptions.push(prototypeManager);
+  }
 }
 
 export function deactivate(): void {
+  deactivateExperiments();
   if (hoverRegistrationDisposable) {
     hoverRegistrationDisposable.dispose();
     hoverRegistrationDisposable = undefined;
   }
+  prototypeManager?.dispose();
+  prototypeManager = undefined;
   statusBarManager?.dispose();
   statusBarManager = undefined;
   menuManager?.dispose();
