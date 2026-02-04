@@ -37,6 +37,10 @@
       {
         "command": "codelens-ai.explainCode",
         "title": "CodeLens AI: Explain Selected Code"
+      },
+      {
+        "command": "codelens-ai.statusBarClick",
+        "title": "CodeLens AI: Show Menu"
       }
     ],
     "configuration": {

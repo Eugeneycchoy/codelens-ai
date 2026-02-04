@@ -6661,7 +6661,7 @@ __export(extension_exports, {
   deactivate: () => deactivate
 });
 module.exports = __toCommonJS(extension_exports);
-var vscode3 = __toESM(require("vscode"));
+var vscode6 = __toESM(require("vscode"));
 
 // src/providers/hoverProvider.ts
 var vscode2 = __toESM(require("vscode"));
@@ -16333,15 +16333,19 @@ Surrounding context (for reference only):
 \`\`\`
 ${context}
 \`\`\`` : "";
-    return `You are a concise code explainer. For the following ${lang} code, respond with:
-1. What it does (1\u20132 sentences).
-2. Why it might exist or its purpose.
-3. Any notable patterns or techniques.
+    return `You explain code to complete beginners who are just learning to program. Your style is:
+- Super simple words (explain like they're 12)
+- Short (2-3 sentences max)
+- Friendly and slightly playful
+- No jargon, no technical terms without explanation
 
-Keep the explanation brief and insightful. Do not repeat the code.
+Format: Just a casual explanation. No bullet points, no numbered lists, no headers.
 
-Code to explain:
-\`\`\`${lang}
+Example input: \`const sum = (a, b) => a + b;\`
+Example output: This creates a little helper called "sum" that adds two numbers together. Give it 2 and 3, it gives you back 5. Pretty handy when you're too lazy to do math yourself.
+
+Now explain this ${lang} code:
+\`\`\`
 ${code}
 \`\`\`${contextBlock}`;
   }
@@ -16660,23 +16664,416 @@ function getExplanationHtml(body) {
 </html>`;
 }
 
+// src/managers/stateManager.ts
+var vscode3 = __toESM(require("vscode"));
+var ENABLED_KEY = "codelensAI.enabled";
+var StateManager = class {
+  constructor(context) {
+    this.context = context;
+    const stored = context.globalState.get(ENABLED_KEY);
+    this._enabled = stored ?? true;
+  }
+  _enabled;
+  _onDidChangeEnabled = new vscode3.EventEmitter();
+  onDidChangeEnabled = this._onDidChangeEnabled.event;
+  getEnabled() {
+    return this._enabled;
+  }
+  async setEnabled(enabled) {
+    if (this._enabled === enabled)
+      return;
+    this._enabled = enabled;
+    await this.context.globalState.update(ENABLED_KEY, enabled);
+    this._onDidChangeEnabled.fire(this._enabled);
+  }
+  dispose() {
+    this._onDidChangeEnabled.dispose();
+  }
+};
+
+// src/managers/menuManager.ts
+var vscode4 = __toESM(require("vscode"));
+var CONFIG_NS = "codelensAI";
+var ACTION_PREFIX = "action:";
+var DEFAULT_MODELS = {
+  openai: "gpt-4o-mini",
+  anthropic: "claude-3-5-sonnet-20241022",
+  ollama: "llama3"
+};
+var OPENAI_MODELS = ["gpt-4o-mini", "gpt-4o", "gpt-4-turbo", "gpt-3.5-turbo"];
+var ANTHROPIC_MODELS = [
+  "claude-3-5-sonnet-20241022",
+  "claude-3-5-haiku-20241022",
+  "claude-3-opus-20240229",
+  "claude-3-sonnet-20240229"
+];
+var OLLAMA_MODELS = ["llama3", "llama3.2", "codellama", "mistral", "phi3"];
+var MenuManager = class {
+  constructor(stateManager2, context) {
+    this.stateManager = stateManager2;
+    this.context = context;
+    this.configWatcherDisposable = vscode4.workspace.onDidChangeConfiguration(
+      (e2) => {
+        if (e2.affectsConfiguration("codelensAI") && this.quickPick?.visible) {
+          this.quickPick.items = this.buildItems();
+        }
+      }
+    );
+    context.subscriptions.push(this.configWatcherDisposable);
+  }
+  quickPick;
+  submenuQuickPick;
+  configWatcherDisposable;
+  getConfig() {
+    const config = vscode4.workspace.getConfiguration(CONFIG_NS);
+    return {
+      provider: config.get("provider") ?? "openai",
+      apiKey: config.get("apiKey") ?? "",
+      model: config.get("model") ?? "gpt-4o-mini",
+      ollamaEndpoint: config.get("ollamaEndpoint") ?? "http://localhost:11434"
+    };
+  }
+  /**
+   * Checks Ollama connectivity via HTTP GET to /api/tags. Returns true if
+   * the endpoint responds successfully.
+   */
+  async checkOllamaConnectivity() {
+    const { ollamaEndpoint } = this.getConfig();
+    const url = `${ollamaEndpoint.replace(/\/$/, "")}/api/tags`;
+    try {
+      const res = await fetch(url, { method: "GET" });
+      return res.ok;
+    } catch {
+      return false;
+    }
+  }
+  /**
+   * Builds the main menu items: Control (toggle with checkmark) and
+   * Configuration (Open Settings), with separators.
+   */
+  buildItems() {
+    const enabled = this.stateManager.getEnabled();
+    const toggleLabel = enabled ? "$(check) CodeLens AI enabled" : "CodeLens AI disabled";
+    const toggleDescription = enabled ? "Click to disable hover explanations" : "Click to enable hover explanations";
+    return [
+      {
+        label: "Control",
+        kind: vscode4.QuickPickItemKind.Separator
+      },
+      {
+        label: toggleLabel,
+        description: toggleDescription,
+        detail: `${ACTION_PREFIX}toggle`,
+        action: "toggle"
+      },
+      {
+        label: "Configuration",
+        kind: vscode4.QuickPickItemKind.Separator
+      },
+      {
+        label: "$(key) Change provider",
+        description: "OpenAI, Anthropic, or Ollama",
+        detail: `${ACTION_PREFIX}showProviderMenu`,
+        action: "showProviderMenu"
+      },
+      {
+        label: "$(symbol-misc) Change model",
+        description: "Model for the current provider",
+        detail: `${ACTION_PREFIX}showModelMenu`,
+        action: "showModelMenu"
+      },
+      {
+        label: "$(settings-gear) Open Settings",
+        description: "Configure provider, API key, and model",
+        detail: `${ACTION_PREFIX}openSettings`,
+        action: "openSettings"
+      }
+    ];
+  }
+  getAction(item) {
+    return item.action ?? (item.detail?.startsWith(ACTION_PREFIX) ? item.detail.slice(ACTION_PREFIX.length) : void 0);
+  }
+  async runAction(action) {
+    if (action === "toggle") {
+      await this.stateManager.setEnabled(!this.stateManager.getEnabled());
+    } else if (action === "openSettings") {
+      await vscode4.commands.executeCommand(
+        "workbench.action.openSettings",
+        CONFIG_NS
+      );
+    } else if (action === "showProviderMenu") {
+      this.quickPick?.hide();
+      void this.showProviderMenu();
+    } else if (action === "showModelMenu") {
+      this.quickPick?.hide();
+      this.showModelMenu();
+    }
+  }
+  /**
+   * Shows provider selection menu with self-contained navigation. Displays
+   * OpenAI, Anthropic, Ollama with status (API key warning, Ollama connectivity).
+   * Checkmark indicates current provider. On selection, updates config with
+   * provider and default model, then returns to main menu.
+   */
+  async showProviderMenu() {
+    const config = this.getConfig();
+    const ollamaOk = await this.checkOllamaConnectivity();
+    const providers = [
+      {
+        id: "openai",
+        label: "OpenAI",
+        status: config.apiKey?.trim() ? "API key set" : "$(warning) Set API key in settings"
+      },
+      {
+        id: "anthropic",
+        label: "Anthropic",
+        status: config.apiKey?.trim() ? "API key set" : "$(warning) Set API key in settings"
+      },
+      {
+        id: "ollama",
+        label: "Ollama",
+        status: ollamaOk ? "Connected" : "$(warning) Cannot reach Ollama; check endpoint"
+      }
+    ];
+    const items = providers.map((p2) => ({
+      label: config.provider === p2.id ? `$(check) ${p2.label}` : p2.label,
+      description: p2.status,
+      detail: p2.id
+    }));
+    if (!this.submenuQuickPick) {
+      this.submenuQuickPick = vscode4.window.createQuickPick();
+      this.submenuQuickPick.canSelectMany = false;
+      this.submenuQuickPick.onDidHide(() => {
+        this.submenuQuickPick.selectedItems = [];
+      });
+      this.context.subscriptions.push(this.submenuQuickPick);
+    }
+    this.submenuQuickPick.title = "Select provider";
+    this.submenuQuickPick.placeholder = "Choose AI provider (sets default model)";
+    this.submenuQuickPick.items = items;
+    this.submenuQuickPick.selectedItems = [];
+    this.submenuQuickPick.show();
+    const acceptDisposable = this.submenuQuickPick.onDidAccept(() => {
+      const selected = this.submenuQuickPick.selectedItems[0];
+      if (!selected?.detail)
+        return;
+      const provider = selected.detail;
+      const configTarget = vscode4.ConfigurationTarget.Global;
+      const c2 = vscode4.workspace.getConfiguration(CONFIG_NS);
+      void c2.update("provider", provider, configTarget);
+      void c2.update("model", DEFAULT_MODELS[provider], configTarget);
+      this.submenuQuickPick.hide();
+    });
+    const hideDisposable = this.submenuQuickPick.onDidHide(() => {
+      acceptDisposable.dispose();
+      hideDisposable.dispose();
+      this.showMainMenu();
+    });
+  }
+  /**
+   * Shows model selection menu for the current provider. Checkmark indicates
+   * current model. On selection, updates config and returns to main menu.
+   */
+  showModelMenu() {
+    const config = this.getConfig();
+    const models = config.provider === "openai" ? OPENAI_MODELS : config.provider === "anthropic" ? ANTHROPIC_MODELS : OLLAMA_MODELS;
+    const items = models.map((model) => ({
+      label: config.model === model ? `$(check) ${model}` : model,
+      detail: model
+    }));
+    if (!this.submenuQuickPick) {
+      this.submenuQuickPick = vscode4.window.createQuickPick();
+      this.submenuQuickPick.canSelectMany = false;
+      this.submenuQuickPick.onDidHide(() => {
+        this.submenuQuickPick.selectedItems = [];
+      });
+      this.context.subscriptions.push(this.submenuQuickPick);
+    }
+    this.submenuQuickPick.title = "Select model";
+    this.submenuQuickPick.placeholder = `Model for ${config.provider}`;
+    this.submenuQuickPick.items = items;
+    this.submenuQuickPick.selectedItems = [];
+    this.submenuQuickPick.show();
+    const acceptDisposable = this.submenuQuickPick.onDidAccept(() => {
+      const selected = this.submenuQuickPick.selectedItems[0];
+      if (!selected?.detail)
+        return;
+      const model = selected.detail;
+      const configTarget = vscode4.ConfigurationTarget.Global;
+      void vscode4.workspace.getConfiguration(CONFIG_NS).update("model", model, configTarget);
+      this.submenuQuickPick.hide();
+    });
+    const hideDisposable = this.submenuQuickPick.onDidHide(() => {
+      acceptDisposable.dispose();
+      hideDisposable.dispose();
+      this.showMainMenu();
+    });
+  }
+  /**
+   * Shows the main menu using createQuickPick. Menu stays open after each
+   * accept so the user can perform multiple actions; config changes refresh
+   * items in real time.
+   */
+  showMainMenu() {
+    if (!this.quickPick) {
+      this.quickPick = vscode4.window.createQuickPick();
+      this.quickPick.title = "CodeLens AI";
+      this.quickPick.placeholder = "Choose an action (multiple allowed)";
+      this.quickPick.matchOnDescription = true;
+      this.quickPick.canSelectMany = true;
+      this.quickPick.onDidAccept(() => {
+        const selected = this.quickPick.selectedItems;
+        const actions = /* @__PURE__ */ new Set();
+        for (const item of selected) {
+          const action = this.getAction(item);
+          if (action)
+            actions.add(action);
+        }
+        void (async () => {
+          for (const action of actions) {
+            await this.runAction(action);
+          }
+          this.quickPick.selectedItems = [];
+          this.quickPick.items = this.buildItems();
+        })();
+      });
+      this.quickPick.onDidHide(() => {
+        this.quickPick.selectedItems = [];
+      });
+    }
+    this.quickPick.items = this.buildItems();
+    this.quickPick.selectedItems = [];
+    this.quickPick.show();
+  }
+  /**
+   * Alias for status bar click handler. Opens the main menu.
+   */
+  show() {
+    this.showMainMenu();
+  }
+  dispose() {
+    this.configWatcherDisposable?.dispose();
+    this.submenuQuickPick?.dispose();
+    this.submenuQuickPick = void 0;
+    this.quickPick?.dispose();
+    this.quickPick = void 0;
+  }
+};
+
+// src/managers/statusBarManager.ts
+var vscode5 = __toESM(require("vscode"));
+var STATUS_BAR_PRIORITY = 100;
+var TOOLTIP_ENABLED = "CodeLens AI - Click to configure";
+var TOOLTIP_DISABLED = "CodeLens AI (disabled) - Click to enable";
+var StatusBarManager = class {
+  constructor(stateManager2, menuManager2) {
+    this.stateManager = stateManager2;
+    this.menuManager = menuManager2;
+    this.statusBarItem = vscode5.window.createStatusBarItem(
+      vscode5.StatusBarAlignment.Right,
+      STATUS_BAR_PRIORITY
+    );
+    this.updateIcon(this.stateManager.getEnabled());
+    this.subscriptions.push(
+      this.stateManager.onDidChangeEnabled(
+        (enabled) => this.updateIcon(enabled)
+      )
+    );
+  }
+  statusBarItem;
+  subscriptions = [];
+  /**
+   * Registers the click handler that opens the menu. Call once during activation.
+   * Returns a disposable that unregisters the command.
+   */
+  registerClickHandler(context) {
+    const disposable = vscode5.commands.registerCommand(
+      "codelens-ai.statusBarClick",
+      () => {
+        this.menuManager.showMainMenu();
+      }
+    );
+    context.subscriptions.push(disposable);
+    this.statusBarItem.command = "codelens-ai.statusBarClick";
+    this.statusBarItem.tooltip = this.stateManager.getEnabled() ? TOOLTIP_ENABLED : TOOLTIP_DISABLED;
+    return disposable;
+  }
+  /**
+   * Switches icon and tooltip between enabled (eye open) and disabled (eye closed).
+   */
+  updateIcon(enabled) {
+    this.statusBarItem.text = enabled ? "$(eye)" : "$(eye-closed)";
+    this.statusBarItem.tooltip = enabled ? TOOLTIP_ENABLED : TOOLTIP_DISABLED;
+    this.statusBarItem.show();
+  }
+  show() {
+    this.statusBarItem.show();
+  }
+  dispose() {
+    for (const d2 of this.subscriptions) {
+      d2.dispose();
+    }
+    this.statusBarItem.dispose();
+  }
+};
+
 // src/extension.ts
+var HOVER_SELECTOR = [{ scheme: "file" }, { scheme: "untitled" }];
+var stateManager;
+var menuManager;
+var statusBarManager;
+var hoverRegistrationDisposable;
 function activate(context) {
   const hoverProvider = new CodeLensHoverProvider();
-  const hoverDisposable = vscode3.languages.registerHoverProvider(
-    [{ scheme: "file" }, { scheme: "untitled" }],
-    hoverProvider
-  );
-  context.subscriptions.push(hoverDisposable);
-  const commandDisposable = vscode3.commands.registerCommand(
+  const sm = new StateManager(context);
+  const mm = new MenuManager(sm, context);
+  const sbm = new StatusBarManager(sm, mm);
+  stateManager = sm;
+  menuManager = mm;
+  statusBarManager = sbm;
+  context.subscriptions.push(sm, mm, sbm);
+  function registerHover() {
+    return vscode6.languages.registerHoverProvider(HOVER_SELECTOR, hoverProvider);
+  }
+  if (sm.getEnabled()) {
+    hoverRegistrationDisposable = registerHover();
+    context.subscriptions.push(hoverRegistrationDisposable);
+  }
+  const stateChangeSubscription = sm.onDidChangeEnabled((enabled) => {
+    if (enabled) {
+      if (!hoverRegistrationDisposable) {
+        hoverRegistrationDisposable = registerHover();
+        context.subscriptions.push(hoverRegistrationDisposable);
+      }
+    } else {
+      if (hoverRegistrationDisposable) {
+        hoverRegistrationDisposable.dispose();
+        hoverRegistrationDisposable = void 0;
+      }
+    }
+  });
+  context.subscriptions.push(stateChangeSubscription);
+  sbm.registerClickHandler(context);
+  sbm.show();
+  const commandDisposable = vscode6.commands.registerCommand(
     "codelens-ai.explainCode",
-    (code, context2) => {
-      void hoverProvider.explainCode(code, context2);
+    (code, ctx) => {
+      void hoverProvider.explainCode(code, ctx);
     }
   );
   context.subscriptions.push(commandDisposable);
 }
 function deactivate() {
+  if (hoverRegistrationDisposable) {
+    hoverRegistrationDisposable.dispose();
+    hoverRegistrationDisposable = void 0;
+  }
+  statusBarManager?.dispose();
+  statusBarManager = void 0;
+  menuManager?.dispose();
+  menuManager = void 0;
+  stateManager?.dispose();
+  stateManager = void 0;
 }
 // Annotate the CommonJS export names for ESM import in node:
 0 && (module.exports = {
