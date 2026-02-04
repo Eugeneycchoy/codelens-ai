@@ -1,7 +1,10 @@
 import * as vscode from "vscode";
 import { AIService } from "../services/aiService";
 import { CacheService } from "../services/cacheService";
-import { CodeStructureDetector } from "../utils/codeStructureDetector";
+import {
+  CodeStructureDetector,
+  type ClassificationResult,
+} from "../utils/codeStructureDetector";
 import { ContextExtractor } from "../utils/contextExtractor";
 
 const THEME_HIGHLIGHT = {
@@ -119,6 +122,27 @@ export class CodeLensHoverProvider
     editor.setDecorations(this.decorationType, [range]);
   }
 
+  /**
+   * Computes the highlight range from classification: structural → full block,
+   * simple → single line, unknown → indentation-based block (handled by getBlockRange).
+   * Caller should pass the same classification used for extraction so highlight and explanation match.
+   */
+  private getHighlightRange(
+    document: vscode.TextDocument,
+    position: vscode.Position,
+    classification: ClassificationResult
+  ): vscode.Range {
+    try {
+      return this.contextExtractor.getBlockRange(
+        document,
+        position,
+        classification
+      );
+    } catch {
+      return document.lineAt(position.line).range;
+    }
+  }
+
   provideHover(
     document: vscode.TextDocument,
     position: vscode.Position,
@@ -134,23 +158,32 @@ export class CodeLensHoverProvider
       if (!this.detector.isEmptyLineInBlock(document, position)) return null;
     }
 
+    const highlightPosition = isEmptyLine
+      ? new vscode.Position(
+          this.getPreviousNonBlankLine(document, position.line),
+          0
+        )
+      : position;
+    const classification = this.detector.classify(document, highlightPosition);
+
     let code: string;
     let context: string;
-
-    if (isEmptyLine) {
-      const prevNonBlankLine = this.getPreviousNonBlankLine(
+    if (classification === "structural") {
+      code = this.contextExtractor.extractBlock(
         document,
-        position.line
+        highlightPosition,
+        classification
       );
-      const blockPosition = new vscode.Position(prevNonBlankLine, 0);
-      code = this.contextExtractor.extractBlock(document, blockPosition);
-      const { context: ctx } = this.contextExtractor.extract(
+      const extracted = this.contextExtractor.extract(
         document,
-        position
+        highlightPosition
       );
-      context = ctx;
+      context = extracted.context;
     } else {
-      const extracted = this.contextExtractor.extract(document, position);
+      const extracted = this.contextExtractor.extract(
+        document,
+        highlightPosition
+      );
       code = extracted.code;
       context = extracted.context;
     }
@@ -166,30 +199,11 @@ export class CodeLensHoverProvider
           ? vscode.window.activeTextEditor
           : undefined);
       if (editor) {
-        const highlightPosition = isEmptyLine
-          ? new vscode.Position(
-              this.getPreviousNonBlankLine(document, position.line),
-              0
-            )
-          : position;
-        let highlightRange: vscode.Range;
-        try {
-          const blockText = this.contextExtractor.extractBlock(
-            document,
-            highlightPosition
-          );
-          const blockLineCount = blockText.split("\n").length;
-          if (blockText.trim().length === 0 || blockLineCount > 15) {
-            highlightRange = document.lineAt(position.line).range;
-          } else {
-            highlightRange = this.contextExtractor.getBlockRange(
-              document,
-              highlightPosition
-            );
-          }
-        } catch {
-          highlightRange = document.lineAt(position.line).range;
-        }
+        const highlightRange = this.getHighlightRange(
+          document,
+          highlightPosition,
+          classification
+        );
         this.applyDecoration(editor, highlightRange);
       }
       return new vscode.Hover(
@@ -198,31 +212,11 @@ export class CodeLensHoverProvider
       );
     }
 
-    const highlightPosition = isEmptyLine
-      ? new vscode.Position(
-          this.getPreviousNonBlankLine(document, position.line),
-          0
-        )
-      : position;
-
-    let highlightRange: vscode.Range;
-    try {
-      const blockText = this.contextExtractor.extractBlock(
-        document,
-        highlightPosition
-      );
-      const blockLineCount = blockText.split("\n").length;
-      if (blockText.trim().length === 0 || blockLineCount > 15) {
-        highlightRange = document.lineAt(position.line).range;
-      } else {
-        highlightRange = this.contextExtractor.getBlockRange(
-          document,
-          highlightPosition
-        );
-      }
-    } catch {
-      highlightRange = document.lineAt(position.line).range;
-    }
+    const highlightRange = this.getHighlightRange(
+      document,
+      highlightPosition,
+      classification
+    );
 
     const editor =
       vscode.window.visibleTextEditors.find((e) => e.document === document) ??
