@@ -66,11 +66,33 @@ export function activate(context: vscode.ExtensionContext): void {
 
   const commandDisposable = vscode.commands.registerCommand(
     "codelens-ai.explainCode",
-    (code?: string, ctx?: string) => {
-      void hoverProvider.explainCode(code, ctx);
+    (codeOrArgs?: string | [string, string], ctx?: string) => {
+      // Command URIs pass a single JSON array [code, context]; normalize to (code, context).
+      let code: string | undefined;
+      let context: string | undefined;
+      if (
+        Array.isArray(codeOrArgs) &&
+        codeOrArgs.length >= 2 &&
+        typeof codeOrArgs[0] === "string"
+      ) {
+        code = codeOrArgs[0];
+        context = typeof codeOrArgs[1] === "string" ? codeOrArgs[1] : "";
+      } else {
+        code = typeof codeOrArgs === "string" ? codeOrArgs : undefined;
+        context = ctx;
+      }
+      void hoverProvider.explainCode(code, context);
     }
   );
   context.subscriptions.push(commandDisposable);
+
+  const retryHoverCommandDisposable = vscode.commands.registerCommand(
+    "codelens-ai.retryHoverExplanation",
+    (code?: string, context?: string) => {
+      hoverProvider.retryExplanation(code ?? "", context ?? "");
+    }
+  );
+  context.subscriptions.push(retryHoverCommandDisposable);
 
   const welcomeSubscription = vscode.workspace.onDidOpenTextDocument(() => {
     if (sm.hasShownWelcome()) return;
