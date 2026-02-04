@@ -16236,6 +16236,7 @@ var AIService = class {
       provider: config.get("provider") ?? "openai",
       apiKey: config.get("apiKey") ?? "",
       model: config.get("model") ?? "gpt-4o-mini",
+      apiBase: config.get("apiBase") ?? "",
       ollamaEndpoint: config.get("ollamaEndpoint") ?? "http://localhost:11434"
     };
   }
@@ -16246,7 +16247,8 @@ var AIService = class {
   async explain(code, lang, context) {
     const cfg = this.getConfig();
     if ((cfg.provider === "openai" || cfg.provider === "anthropic") && !cfg.apiKey) {
-      return "Please set `codelensAI.apiKey` in settings for the selected provider.";
+      const apiKeyHint = cfg.apiBase ? "Please set `codelensAI.apiKey` and verify `codelensAI.apiBase` in settings for the selected provider." : "Please set `codelensAI.apiKey` in settings for the selected provider.";
+      return apiKeyHint;
     }
     const prompt = this.buildPrompt(code, lang, context);
     try {
@@ -16254,17 +16256,72 @@ var AIService = class {
         case "openai":
           return await this.callOpenAI(prompt, cfg.model, cfg.apiKey);
         case "anthropic":
-          return await this.callAnthropic(prompt, cfg.model, cfg.apiKey);
+          return await this.callAnthropic(
+            prompt,
+            cfg.model,
+            cfg.apiKey,
+            cfg.apiBase
+          );
         case "ollama":
           return await this.callOllama(prompt, cfg.model, cfg.ollamaEndpoint);
         default:
           return `Unknown provider: ${cfg.provider}. Use openai, anthropic, or ollama.`;
       }
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const hasApiBase = cfg.provider === "anthropic" && Boolean(cfg.apiBase?.trim());
+      const message = this.analyzeError(err, hasApiBase);
       console.error("[CodeLens AI]", err);
-      return `Explanation failed: ${message}. Check your API key and network.`;
+      return message;
     }
+  }
+  /**
+   * Classifies the error and returns a user-friendly message using
+   * error type, status code (when present), and message patterns.
+   */
+  analyzeError(error, hasApiBase) {
+    const status = this.getStatusCode(error);
+    const message = error instanceof Error ? error.message : String(error);
+    const msgLower = message.toLowerCase();
+    if (status !== void 0) {
+      if (status === 401 || status === 403) {
+        return hasApiBase ? "Authentication failed (401/403). Check `codelensAI.apiKey` and that `codelensAI.apiBase` points to a valid endpoint that accepts your key." : "Authentication failed (401/403). Check `codelensAI.apiKey` in settings.";
+      }
+      if (status >= 500) {
+        return "The API server is temporarily unavailable. Try again in a few minutes.";
+      }
+      if (status === 429) {
+        return "Rate limit exceeded. Wait a moment and try again.";
+      }
+      if (status >= 400 && status < 500) {
+        return `Request was rejected (${status}). Check your model name and request format.`;
+      }
+    }
+    if (/econnrefused|econnreset|enotfound|network|fetch failed|failed to fetch/i.test(
+      msgLower
+    ) || error instanceof TypeError && msgLower.includes("fetch")) {
+      return hasApiBase ? "Could not reach the API. Check `codelensAI.apiBase`, your network, and that the service is running." : "Could not reach the API. Check your network and that the provider service is available.";
+    }
+    if (/timeout|etimedout|timed out/i.test(msgLower)) {
+      return "The request timed out. Check your network or try again.";
+    }
+    if (/unauthorized|invalid.*api.*key|authentication|invalid key|401|403/i.test(
+      msgLower
+    )) {
+      return hasApiBase ? "Invalid or missing API key. Check `codelensAI.apiKey` and `codelensAI.apiBase`." : "Invalid or missing API key. Check `codelensAI.apiKey` in settings.";
+    }
+    const shortMessage = message.length > 120 ? `${message.slice(0, 117)}...` : message;
+    return `Explanation failed: ${shortMessage}. Check your API key and network.`;
+  }
+  getStatusCode(error) {
+    if (error == null || typeof error !== "object")
+      return void 0;
+    const o2 = error;
+    if (typeof o2.status === "number")
+      return o2.status;
+    const res = o2.response;
+    if (res != null && typeof res.status === "number")
+      return res.status;
+    return void 0;
   }
   /**
    * Builds a prompt that asks for what/why/patterns, concise, without repeating the code.
@@ -16300,8 +16357,11 @@ ${code}
     }
     return content.trim();
   }
-  async callAnthropic(prompt, model, apiKey) {
-    const client = new sdk_default({ apiKey });
+  async callAnthropic(prompt, model, apiKey, apiBase) {
+    const client = new sdk_default({
+      apiKey,
+      ...apiBase ? { baseURL: apiBase } : {}
+    });
     const message = await client.messages.create({
       model,
       max_tokens: 1024,
@@ -16498,6 +16558,7 @@ var CodeLensHoverProvider = class {
   }
   createHoverContent(explanation, code, context) {
     const md = new vscode2.MarkdownString(void 0, true);
+    md.isTrusted = true;
     md.appendMarkdown("### \u{1F9E0} CodeLens AI\n\n");
     md.appendMarkdown(explanation);
     md.appendMarkdown("\n\n---\n\n");

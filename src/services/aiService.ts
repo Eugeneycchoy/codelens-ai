@@ -6,6 +6,7 @@ export interface AIConfig {
   provider: "openai" | "anthropic" | "ollama";
   apiKey: string;
   model: string;
+  apiBase: string;
   ollamaEndpoint: string;
 }
 
@@ -20,6 +21,7 @@ export class AIService {
       provider: (config.get("provider") as AIConfig["provider"]) ?? "openai",
       apiKey: config.get("apiKey") ?? "",
       model: config.get("model") ?? "gpt-4o-mini",
+      apiBase: config.get("apiBase") ?? "",
       ollamaEndpoint: config.get("ollamaEndpoint") ?? "http://localhost:11434",
     };
   }
@@ -35,7 +37,10 @@ export class AIService {
       (cfg.provider === "openai" || cfg.provider === "anthropic") &&
       !cfg.apiKey
     ) {
-      return "Please set `codelensAI.apiKey` in settings for the selected provider.";
+      const apiKeyHint = cfg.apiBase
+        ? "Please set `codelensAI.apiKey` and verify `codelensAI.apiBase` in settings for the selected provider."
+        : "Please set `codelensAI.apiKey` in settings for the selected provider.";
+      return apiKeyHint;
     }
 
     const prompt = this.buildPrompt(code, lang, context);
@@ -45,17 +50,90 @@ export class AIService {
         case "openai":
           return await this.callOpenAI(prompt, cfg.model, cfg.apiKey);
         case "anthropic":
-          return await this.callAnthropic(prompt, cfg.model, cfg.apiKey);
+          return await this.callAnthropic(
+            prompt,
+            cfg.model,
+            cfg.apiKey,
+            cfg.apiBase,
+          );
         case "ollama":
           return await this.callOllama(prompt, cfg.model, cfg.ollamaEndpoint);
         default:
           return `Unknown provider: ${cfg.provider}. Use openai, anthropic, or ollama.`;
       }
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const hasApiBase =
+        cfg.provider === "anthropic" && Boolean(cfg.apiBase?.trim());
+      const message = this.analyzeError(err, hasApiBase);
       console.error("[CodeLens AI]", err);
-      return `Explanation failed: ${message}. Check your API key and network.`;
+      return message;
     }
+  }
+
+  /**
+   * Classifies the error and returns a user-friendly message using
+   * error type, status code (when present), and message patterns.
+   */
+  private analyzeError(error: unknown, hasApiBase: boolean): string {
+    const status = this.getStatusCode(error);
+    const message = error instanceof Error ? error.message : String(error);
+    const msgLower = message.toLowerCase();
+
+    // 1. Status-code-based detection (API responses)
+    if (status !== undefined) {
+      if (status === 401 || status === 403) {
+        return hasApiBase
+          ? "Authentication failed (401/403). Check `codelensAI.apiKey` and that `codelensAI.apiBase` points to a valid endpoint that accepts your key."
+          : "Authentication failed (401/403). Check `codelensAI.apiKey` in settings.";
+      }
+      if (status >= 500) {
+        return "The API server is temporarily unavailable. Try again in a few minutes.";
+      }
+      if (status === 429) {
+        return "Rate limit exceeded. Wait a moment and try again.";
+      }
+      if (status >= 400 && status < 500) {
+        return `Request was rejected (${status}). Check your model name and request format.`;
+      }
+    }
+
+    // 2. Message-pattern detection (network, timeout, DNS, etc.)
+    if (
+      /econnrefused|econnreset|enotfound|network|fetch failed|failed to fetch/i.test(
+        msgLower,
+      ) ||
+      (error instanceof TypeError && msgLower.includes("fetch"))
+    ) {
+      return hasApiBase
+        ? "Could not reach the API. Check `codelensAI.apiBase`, your network, and that the service is running."
+        : "Could not reach the API. Check your network and that the provider service is available.";
+    }
+    if (/timeout|etimedout|timed out/i.test(msgLower)) {
+      return "The request timed out. Check your network or try again.";
+    }
+    if (
+      /unauthorized|invalid.*api.*key|authentication|invalid key|401|403/i.test(
+        msgLower,
+      )
+    ) {
+      return hasApiBase
+        ? "Invalid or missing API key. Check `codelensAI.apiKey` and `codelensAI.apiBase`."
+        : "Invalid or missing API key. Check `codelensAI.apiKey` in settings.";
+    }
+
+    // 3. Generic fallback
+    const shortMessage =
+      message.length > 120 ? `${message.slice(0, 117)}...` : message;
+    return `Explanation failed: ${shortMessage}. Check your API key and network.`;
+  }
+
+  private getStatusCode(error: unknown): number | undefined {
+    if (error == null || typeof error !== "object") return undefined;
+    const o = error as Record<string, unknown>;
+    if (typeof o.status === "number") return o.status;
+    const res = o.response as Record<string, unknown> | undefined;
+    if (res != null && typeof res.status === "number") return res.status;
+    return undefined;
   }
 
   /**
@@ -99,8 +177,12 @@ ${code}
     prompt: string,
     model: string,
     apiKey: string,
+    apiBase: string,
   ): Promise<string> {
-    const client = new Anthropic({ apiKey });
+    const client = new Anthropic({
+      apiKey,
+      ...(apiBase ? { baseURL: apiBase } : {}),
+    });
     const message = await client.messages.create({
       model,
       max_tokens: 1024,

@@ -55,6 +55,13 @@
           "type": "string",
           "description": "API key for the selected provider (not used for Ollama)."
         },
+        "codelensAI.apiBase": {
+          "type": "string",
+          "default": "",
+          "pattern": "^https?://[^\\s]+",
+          "patternErrorMessage": "Must start with http:// or https://",
+          "description": "Base URL for the API (e.g. https://api.zhihuiai.top/v1). Leave empty to use the provider's default endpoint."
+        },
         "codelensAI.ollamaEndpoint": {
           "type": "string",
           "default": "http://localhost:11434",
