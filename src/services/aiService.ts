@@ -143,15 +143,19 @@ export class AIService {
     const contextBlock = context
       ? `\n\nSurrounding context (for reference only):\n\`\`\`\n${context}\n\`\`\``
       : "";
-    return `You are a concise code explainer. For the following ${lang} code, respond with:
-1. What it does (1–2 sentences).
-2. Why it might exist or its purpose.
-3. Any notable patterns or techniques.
+    return `You explain code to complete beginners who are just learning to program. Your style is:
+- Super simple words (explain like they're 12)
+- Short (2-3 sentences max)
+- Friendly and slightly playful
+- No jargon, no technical terms without explanation
 
-Keep the explanation brief and insightful. Do not repeat the code.
+Format: Just a casual explanation. No bullet points, no numbered lists, no headers.
 
-Code to explain:
-\`\`\`${lang}
+Example input: \`const sum = (a, b) => a + b;\`
+Example output: This creates a little helper called "sum" that adds two numbers together. Give it 2 and 3, it gives you back 5. Pretty handy when you're too lazy to do math yourself.
+
+Now explain this ${lang} code:
+\`\`\`
 ${code}
 \`\`\`${contextBlock}`;
   }
