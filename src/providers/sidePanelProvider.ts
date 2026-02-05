@@ -311,7 +311,7 @@ export class SidePanelProvider
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline';">
-  <title>CodeLens AI</title>
+  <title>Dumbify</title>
   <style>
     * {
       box-sizing: border-box;
@@ -508,7 +508,7 @@ export class SidePanelProvider
 </head>
 <body>
   <div class="header">
-    <h1>🧠 CodeLens AI</h1>
+    <h1>🧠 Dumbify</h1>
     <button class="btn btn-primary" onclick="explainSelection()">Explain Selection</button>
   </div>
   
@@ -680,7 +680,7 @@ export class FloatingPanelProvider implements vscode.Disposable {
     } else {
       this.panel = vscode.window.createWebviewPanel(
         "codelens-ai.floatingPanel",
-        "🧠 CodeLens AI",
+        "🧠 Dumbify",
         vscode.ViewColumn.Beside,
         {
           enableScripts: true,
@@ -775,7 +775,7 @@ export class FloatingPanelProvider implements vscode.Disposable {
   </style>
 </head>
 <body>
-  <h2>🧠 CodeLens AI</h2>
+  <h2>🧠 Dumbify</h2>
   <div class="loading">
     <div class="spinner"></div>
     <span>Generating explanation...</span>
@@ -850,7 +850,7 @@ export class FloatingPanelProvider implements vscode.Disposable {
   </style>
 </head>
 <body>
-  <h2>🧠 CodeLens AI</h2>
+  <h2>🧠 Dumbify</h2>
   
   <div class="explanation">${this.escapeHtml(explanation)}</div>
   

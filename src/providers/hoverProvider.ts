@@ -291,7 +291,7 @@ export class CodeLensHoverProvider
   ): vscode.MarkdownString {
     const md = new vscode.MarkdownString(undefined, true);
     md.isTrusted = true;
-    md.appendMarkdown("### 🧠 CodeLens AI\n\n");
+    md.appendMarkdown("### 🧠 Dumbify\n\n");
     md.appendMarkdown(explanation);
     md.appendMarkdown("\n\n---\n\n");
     const args = encodeURIComponent(JSON.stringify([code, context]));
@@ -456,7 +456,7 @@ export class CodeLensHoverProvider
       explanation = await vscode.window.withProgress(
         {
           location: vscode.ProgressLocation.Notification,
-          title: "CodeLens AI",
+          title: "Dumbify",
           cancellable: false,
         },
         async () =>
@@ -473,7 +473,7 @@ export class CodeLensHoverProvider
       );
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      vscode.window.showErrorMessage(`CodeLens AI: ${message}`);
+      vscode.window.showErrorMessage(`Dumbify: ${message}`);
       return;
     }
     // Do not cache detailed explanation under the same key as hover; otherwise
@@ -482,7 +482,7 @@ export class CodeLensHoverProvider
   }
 
   private showExplanationPanel(explanation: string): void {
-    const title = "CodeLens AI: Explanation";
+    const title = "Dumbify: Explanation";
     const panel = vscode.window.createWebviewPanel(
       "codelensAiExplain",
       title,
@@ -536,7 +536,7 @@ function getExplanationHtml(body: string): string {
   </style>
 </head>
 <body>
-  <h2>🧠 CodeLens AI</h2>
+  <h2>🧠 Dumbify</h2>
   <div>${body}</div>
 </body>
 </html>`;

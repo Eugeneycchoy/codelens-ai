@@ -48,7 +48,7 @@ export class ExplanationDocumentProvider
    * Uses the target language for syntax highlighting in code blocks.
    */
   private formatExplanation(data: ExplanationData): string {
-    const header = `// 🧠 CodeLens AI Explanation
+    const header = `// 🧠 Dumbify Explanation
 // Generated: ${new Date(data.timestamp).toLocaleString()}
 // ────────────────────────────────────────────────────────────
 
@@ -155,7 +155,7 @@ export class PeekExplanationProvider implements vscode.Disposable {
       explanation = await vscode.window.withProgress(
         {
           location: vscode.ProgressLocation.Notification,
-          title: "CodeLens AI: Generating explanation...",
+          title: "Dumbify: Generating explanation...",
           cancellable: true,
         },
         async (_progress, token) => {
@@ -261,7 +261,7 @@ export class QuickPeekProvider implements vscode.Disposable {
     if (!explanation) {
       // Show loading quick pick
       const loadingPick = vscode.window.createQuickPick();
-      loadingPick.title = "🧠 CodeLens AI";
+      loadingPick.title = "🧠 Dumbify";
       loadingPick.placeholder = "Generating explanation...";
       loadingPick.busy = true;
       loadingPick.show();
@@ -303,7 +303,7 @@ export class QuickPeekProvider implements vscode.Disposable {
     ];
 
     const selection = await vscode.window.showQuickPick(items, {
-      title: "🧠 CodeLens AI Quick Peek",
+      title: "🧠 Dumbify Quick Peek",
       placeHolder: explanation,
     });
 
