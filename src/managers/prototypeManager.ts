@@ -276,17 +276,14 @@ export class PrototypeManager implements vscode.Disposable {
     ];
 
     const selection = await vscode.window.showQuickPick(items, {
-      title: "🧠 CodeLens AI - Select UI Mode",
+      title: "🧠 Dumbify - Select UI Mode",
       placeHolder: `Current mode: ${this.currentMode}`,
     });
 
     if (selection) {
       await this.setMode(selection.mode);
       vscode.window.showInformationMessage(
-        `CodeLens AI mode set to: ${selection.label.replace(
-          /\$\([^)]+\)\s*/,
-          ""
-        )}`
+        `Dumbify mode set to: ${selection.label.replace(/\$\([^)]+\)\s*/, "")}`
       );
     }
   }
@@ -393,10 +390,10 @@ export class PrototypeManager implements vscode.Disposable {
     if (this.codeLensRegistration) {
       this.codeLensRegistration.dispose();
       this.codeLensRegistration = null;
-      vscode.window.showInformationMessage("CodeLens explanations disabled");
+      vscode.window.showInformationMessage("Dumbify explanations disabled");
     } else {
       this.enableCodeLensMode();
-      vscode.window.showInformationMessage("CodeLens explanations enabled");
+      vscode.window.showInformationMessage("Dumbify explanations enabled");
     }
   }
 
@@ -413,7 +410,7 @@ export class PrototypeManager implements vscode.Disposable {
    */
   private updateStatusBar(icon: string, tooltip: string): void {
     this.statusBarItem.text = `${icon} AI Mode`;
-    this.statusBarItem.tooltip = `CodeLens AI: ${tooltip}\nClick to change mode`;
+    this.statusBarItem.tooltip = `Dumbify: ${tooltip}\nClick to change mode`;
     this.statusBarItem.show();
   }
 

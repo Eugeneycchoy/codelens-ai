@@ -5,8 +5,8 @@ import { MenuManager } from "./menuManager";
 /** Priority for right side of status bar; higher values sit further right. */
 const STATUS_BAR_PRIORITY = 100;
 
-const TOOLTIP_ENABLED = "CodeLens AI - Click to configure";
-const TOOLTIP_DISABLED = "CodeLens AI (disabled) - Click to enable";
+const TOOLTIP_ENABLED = "Dumbify - Click to configure";
+const TOOLTIP_DISABLED = "Dumbify (disabled) - Click to enable";
 
 /**
  * Manages the CodeLens AI status bar item: icon (eye/eye-closed), tooltip, click-to-menu,
@@ -18,18 +18,18 @@ export class StatusBarManager {
 
   constructor(
     private readonly stateManager: StateManager,
-    private readonly menuManager: MenuManager,
+    private readonly menuManager: MenuManager
   ) {
     this.statusBarItem = vscode.window.createStatusBarItem(
       vscode.StatusBarAlignment.Right,
-      STATUS_BAR_PRIORITY,
+      STATUS_BAR_PRIORITY
     );
     this.updateIcon(this.stateManager.getEnabled());
 
     this.subscriptions.push(
       this.stateManager.onDidChangeEnabled((enabled) =>
-        this.updateIcon(enabled),
-      ),
+        this.updateIcon(enabled)
+      )
     );
   }
 
@@ -42,7 +42,7 @@ export class StatusBarManager {
       "codelens-ai.statusBarClick",
       () => {
         this.menuManager.showMainMenu();
-      },
+      }
     );
     context.subscriptions.push(disposable);
     this.statusBarItem.command = "codelens-ai.statusBarClick";
