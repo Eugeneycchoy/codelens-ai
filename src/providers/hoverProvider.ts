@@ -251,7 +251,9 @@ export class CodeLensHoverProvider
 
   /**
    * Fetches explanation from AI in the background and caches on success.
-   * Uses the given cancellation token (from hover or new-hover supersede). Does not cache when cancelled.
+   * When AIService throws (network/timeout/auth/rate-limit, etc.), caches the error with
+   * CACHED_ERROR_PREFIX so the hover shows the Retry link. Uses the given cancellation
+   * token (from hover or new-hover supersede). Does not cache when cancelled.
    */
   private async fetchExplanation(
     document: vscode.TextDocument,
