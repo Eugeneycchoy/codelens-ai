@@ -2,7 +2,7 @@
   "name": "codelens-ai",
   "displayName": "CodeLens AI",
   "version": "0.1.0",
-  "description": "AI-powered code explanations on hover. Hover over any line or code block to see what it does, why it exists, and how it connects to surrounding code.",
+  "description": "AI-powered code explanations via CodeLens and Side Panel. Click inline \"Explain\" links above code to open detailed explanations in the Side Panel; hover is also available for quick previews.",
   "publisher": "c29ce4d7-9ced-651f-8c88-edff7e3d057a",
   "license": "MIT",
   "repository": {
