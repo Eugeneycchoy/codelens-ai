@@ -10,18 +10,32 @@ export interface AIConfig {
   ollamaEndpoint: string;
 }
 
+/** Maximum time to wait for an AI request before aborting (ms). */
+const AI_REQUEST_TIMEOUT_MS = 30_000;
+
 /**
- * Converts VS Code's CancellationToken to an AbortSignal so underlying fetch/API
- * calls can be aborted when the user cancels (e.g. moves the cursor away from hover).
+ * Converts VS Code's CancellationToken and a timeout into a single AbortSignal
+ * so underlying fetch/API calls are aborted on user cancel or after 30 seconds.
+ * Returns { signal, cleanup } so caller can clear the timeout when the request settles.
  */
-function cancellationTokenToAbortSignal(
-  token?: vscode.CancellationToken
-): AbortSignal | undefined {
-  if (!token) return undefined;
-  if (token.isCancellationRequested) return AbortSignal.abort();
+function createAbortSignalWithTimeout(token?: vscode.CancellationToken): {
+  signal: AbortSignal;
+  cleanup: () => void;
+} {
   const controller = new AbortController();
-  token.onCancellationRequested(() => controller.abort());
-  return controller.signal;
+  const timeoutId = setTimeout(() => controller.abort(), AI_REQUEST_TIMEOUT_MS);
+  const cleanup = () => clearTimeout(timeoutId);
+  if (token) {
+    if (token.isCancellationRequested) {
+      cleanup();
+      return { signal: AbortSignal.abort(), cleanup: () => {} };
+    }
+    token.onCancellationRequested(() => {
+      cleanup();
+      controller.abort();
+    });
+  }
+  return { signal: controller.signal, cleanup };
 }
 
 /**
@@ -42,7 +56,8 @@ export class AIService {
 
   /**
    * Request an explanation for the given code. Routes to the configured provider.
-   * Returns a user-friendly error message on failure instead of throwing.
+   * Throws an Error with a user-friendly message on failure (network, timeout, auth, rate-limit, etc.)
+   * so callers can show a Retry option. Returns only on success or user cancellation.
    * Optional cancellationToken aborts the request when cancelled (e.g. hover dismissed).
    * Use explainOptions.detailLevel "detailed" and fileStructure for richer "Learn More" explanations.
    */
@@ -65,35 +80,45 @@ export class AIService {
       const apiKeyHint = cfg.apiBase
         ? "Please set `codelensAI.apiKey` and verify `codelensAI.apiBase` in settings for the selected provider."
         : "Please set `codelensAI.apiKey` in settings for the selected provider.";
-      return apiKeyHint;
+      throw new Error(apiKeyHint);
     }
 
     const prompt = this.buildPrompt(code, lang, context, explainOptions);
-    const signal = cancellationTokenToAbortSignal(cancellationToken);
+    const { signal, cleanup } = createAbortSignalWithTimeout(cancellationToken);
 
     try {
+      let result: string;
       switch (cfg.provider) {
         case "openai":
-          return await this.callOpenAI(prompt, cfg.model, cfg.apiKey, signal);
+          result = await this.callOpenAI(prompt, cfg.model, cfg.apiKey, signal);
+          break;
         case "anthropic":
-          return await this.callAnthropic(
+          result = await this.callAnthropic(
             prompt,
             cfg.model,
             cfg.apiKey,
             cfg.apiBase,
             signal
           );
+          break;
         case "ollama":
-          return await this.callOllama(
+          result = await this.callOllama(
             prompt,
             cfg.model,
             cfg.ollamaEndpoint,
             signal
           );
+          break;
         default:
-          return `Unknown provider: ${cfg.provider}. Use openai, anthropic, or ollama.`;
+          cleanup();
+          throw new Error(
+            `Unknown provider: ${cfg.provider}. Use openai, anthropic, or ollama.`
+          );
       }
+      cleanup();
+      return result;
     } catch (err) {
+      cleanup();
       if (this.isAbortError(err)) {
         return "Request was cancelled.";
       }
@@ -101,7 +126,7 @@ export class AIService {
         cfg.provider === "anthropic" && Boolean(cfg.apiBase?.trim());
       const message = this.analyzeError(err, hasApiBase);
       console.error("[CodeLens AI]", err);
-      return message;
+      throw new Error(message);
     }
   }
 
@@ -256,7 +281,7 @@ ${code}
     );
     const content = completion.choices[0]?.message?.content;
     if (content == null || content === "") {
-      return "No explanation was returned from the provider.";
+      throw new Error("No explanation was returned from the provider.");
     }
     return content.trim();
   }
@@ -289,7 +314,7 @@ ${code}
         return block.text.trim();
       }
     }
-    return "No explanation was returned from the provider.";
+    throw new Error("No explanation was returned from the provider.");
   }
 
   private async callOllama(
@@ -313,7 +338,7 @@ ${code}
     const data = (await res.json()) as { response?: string };
     const response = data.response;
     if (response == null || response === "") {
-      return "No explanation was returned from Ollama.";
+      throw new Error("No explanation was returned from the provider.");
     }
     return response.trim();
   }
