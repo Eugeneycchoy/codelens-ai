@@ -4,8 +4,15 @@ import { ContextExtractor } from "./contextExtractor";
 import { CodeStructureDetector } from "./codeStructureDetector";
 import { CodeLensHoverProvider } from "../providers/hoverProvider";
 
-/** Hoisted so vi.mock("vscode") factory can reference them. */
-const { mockWindow, mockWorkspace } = vi.hoisted(() => ({
+/** Hoisted so vi.mock factories can reference them. Used by 13 core-flow tests. */
+const {
+  mockWindow,
+  mockWorkspace,
+  cacheGet,
+  cacheSet,
+  cancelCalls,
+  aiExplain,
+} = vi.hoisted(() => ({
   mockWindow: {
     visibleTextEditors: [] as Array<{
       document: unknown;
@@ -24,6 +31,10 @@ const { mockWindow, mockWorkspace } = vi.hoisted(() => ({
     getConfiguration: vi.fn(() => ({ get: vi.fn(() => "") })),
     onDidChangeConfiguration: vi.fn(() => ({ dispose: vi.fn() })),
   },
+  cacheGet: vi.fn(() => "Cached explanation"),
+  cacheSet: vi.fn(),
+  cancelCalls: [] as unknown[],
+  aiExplain: vi.fn(() => Promise.resolve("")),
 }));
 
 /**
@@ -87,7 +98,12 @@ vi.mock("vscode", () => {
       isCancellationRequested: false,
       onCancellationRequested: vi.fn(),
     };
-    cancel = vi.fn();
+    cancel = vi.fn(function (this: {
+      token: { isCancellationRequested: boolean };
+    }) {
+      cancelCalls.push(this);
+      this.token.isCancellationRequested = true;
+    });
     dispose = vi.fn();
   }
   return {
@@ -104,14 +120,14 @@ vi.mock("vscode", () => {
 
 vi.mock("../services/aiService", () => ({
   AIService: class {
-    explain = vi.fn();
+    explain = aiExplain;
   },
 }));
 
 vi.mock("../services/cacheService", () => ({
   CacheService: class {
-    get = vi.fn(() => "Cached explanation");
-    set = vi.fn();
+    get = cacheGet;
+    set = cacheSet;
     delete = vi.fn();
   },
 }));
@@ -463,6 +479,168 @@ describe("ContextExtractor.getBlockRange", () => {
   });
 });
 
+/**
+ * Verifies that getBlockRange produces correct highlight ranges (start/end line and character)
+ * for each supported language (TypeScript, JavaScript, Python).
+ */
+describe("ContextExtractor.getBlockRange — correct highlights per language", () => {
+  let extractor: ContextExtractor;
+
+  beforeEach(() => {
+    extractor = new ContextExtractor();
+  });
+
+  describe("TypeScript", () => {
+    const lang = "typescript";
+
+    it("structural: if block — range from if line to last body line, full line widths", () => {
+      const lines = ["if (x) {", "  foo();", "  bar();", "}"];
+      const doc = makeDocument(lines, lang);
+      const range = extractor.getBlockRange(doc, pos(1, 2), "structural");
+      expect(range.start.line).toBe(0);
+      expect(range.end.line).toBe(2);
+      expect(range.start.character).toBe(0);
+      expect(range.end.character).toBe(lines[2].length);
+    });
+
+    it("structural: function — range from function line to last body line", () => {
+      const lines = ["function foo() {", "  return 1;", "}"];
+      const doc = makeDocument(lines, lang);
+      const range = extractor.getBlockRange(doc, pos(0, 0), "structural");
+      expect(range.start.line).toBe(0);
+      expect(range.end.line).toBe(1);
+      expect(range.start.character).toBe(0);
+      expect(range.end.character).toBe(lines[1].length);
+    });
+
+    it("structural: class — range includes class and methods, excludes closing brace", () => {
+      const lines = ["class A {", "  m() {", "    return 1;", "  }", "}"];
+      const doc = makeDocument(lines, lang);
+      const range = extractor.getBlockRange(doc, pos(0, 0), "structural");
+      expect(range.start.line).toBe(0);
+      expect(range.end.line).toBe(3);
+      expect(range.end.character).toBe(lines[3].length);
+    });
+
+    it("simple: const/return/import/export — single line, full line extent", () => {
+      const line = "const x = 1;";
+      const doc = makeDocument([line], lang);
+      const r = extractor.getBlockRange(doc, pos(0, 0), "simple");
+      expect(r.start.line).toBe(0);
+      expect(r.end.line).toBe(0);
+      expect(r.start.character).toBe(0);
+      expect(r.end.character).toBe(line.length);
+
+      const docReturn = makeDocument(["  return x;"], lang);
+      const rReturn = extractor.getBlockRange(docReturn, pos(0, 2), "simple");
+      expect(rReturn.start.character).toBe(0);
+      expect(rReturn.end.character).toBe("  return x;".length);
+
+      const docImport = makeDocument(["import { a } from 'm';"], lang);
+      const rImport = extractor.getBlockRange(docImport, pos(0, 0), "simple");
+      expect(rImport.end.character).toBe("import { a } from 'm';".length);
+
+      const docExport = makeDocument(["export default f;"], lang);
+      const rExport = extractor.getBlockRange(docExport, pos(0, 0), "simple");
+      expect(rExport.end.character).toBe("export default f;".length);
+    });
+  });
+
+  describe("JavaScript", () => {
+    const lang = "javascript";
+
+    it("structural: for/while/function/class/try/switch — correct block extent", () => {
+      const linesFor = ["for (;;) {", "  bar();", "}"];
+      const docFor = makeDocument(linesFor, lang);
+      expectRangeLines(
+        extractor.getBlockRange(docFor, pos(0, 0), "structural"),
+        0,
+        1
+      );
+
+      const linesFn = ["function f() {", "  return 1;", "}"];
+      const docFn = makeDocument(linesFn, lang);
+      expectRangeLines(
+        extractor.getBlockRange(docFn, pos(1, 2), "structural"),
+        0,
+        1
+      );
+
+      const linesClass = ["class C {", "  m() {}", "}"];
+      const docClass = makeDocument(linesClass, lang);
+      const rangeClass = extractor.getBlockRange(
+        docClass,
+        pos(0, 0),
+        "structural"
+      );
+      expect(rangeClass.start.line).toBe(0);
+      expect(rangeClass.end.line).toBe(1);
+      expect(rangeClass.end.character).toBe("  m() {}".length);
+    });
+
+    it("simple: let/var/return/import/export — single-line highlight", () => {
+      const line = "let x = 1;";
+      const doc = makeDocument([line], lang);
+      const r = extractor.getBlockRange(doc, pos(0, 0), "simple");
+      expectSingleLine(r, 0);
+      expect(r.end.character).toBe(line.length);
+    });
+  });
+
+  describe("Python", () => {
+    const lang = "python";
+
+    it("structural: if/elif/for/while/def/class/try/with — correct block extent", () => {
+      const linesIf = ["if x:", "    foo()", "    bar()"];
+      const docIf = makeDocument(linesIf, lang);
+      const rIf = extractor.getBlockRange(docIf, pos(0, 0), "structural");
+      expect(rIf.start.line).toBe(0);
+      expect(rIf.end.line).toBe(2);
+      expect(rIf.end.character).toBe(linesIf[2].length);
+
+      const linesDef = ["def f():", "    return 1"];
+      const docDef = makeDocument(linesDef, lang);
+      const rDef = extractor.getBlockRange(docDef, pos(0, 0), "structural");
+      expect(rDef.start.line).toBe(0);
+      expect(rDef.end.line).toBe(1);
+      expect(rDef.end.character).toBe("    return 1".length);
+
+      const linesClass = [
+        "class Helper:",
+        "    def run(self):",
+        "        pass",
+      ];
+      const docClass = makeDocument(linesClass, lang);
+      const rClass = extractor.getBlockRange(docClass, pos(0, 0), "structural");
+      expect(rClass.start.line).toBe(0);
+      expect(rClass.end.line).toBe(2);
+      expect(rClass.end.character).toBe("        pass".length);
+
+      const linesWith = ["with open(f) as x:", "    read()"];
+      const docWith = makeDocument(linesWith, lang);
+      const rWith = extractor.getBlockRange(docWith, pos(1, 4), "structural");
+      expect(rWith.start.line).toBe(0);
+      expect(rWith.end.line).toBe(1);
+      expect(rWith.end.character).toBe("    read()".length);
+    });
+
+    it("simple: return/import/from — single-line highlight", () => {
+      const docReturn = makeDocument(["    return 42"], lang);
+      const rReturn = extractor.getBlockRange(docReturn, pos(0, 4), "simple");
+      expectSingleLine(rReturn, 0);
+      expect(rReturn.end.character).toBe("    return 42".length);
+
+      const docImport = makeDocument(["import os"], lang);
+      const rImport = extractor.getBlockRange(docImport, pos(0, 0), "simple");
+      expect(rImport.end.character).toBe("import os".length);
+
+      const docFrom = makeDocument(["from pathlib import Path"], lang);
+      const rFrom = extractor.getBlockRange(docFrom, pos(0, 0), "simple");
+      expect(rFrom.end.character).toBe("from pathlib import Path".length);
+    });
+  });
+});
+
 describe("ContextExtractor.getBlockRange — all three languages", () => {
   let extractor: ContextExtractor;
 
@@ -777,5 +955,547 @@ describe("CodeLensHoverProvider provideHover highlight (integration)", () => {
 
       expectDecorationRange(setDecorations, doc, 1, 4);
     });
+  });
+});
+
+/** Token used by provideHover in core-flow tests. */
+const coreFlowToken = {
+  isCancellationRequested: false,
+  onCancellationRequested: vi.fn(),
+};
+
+/**
+ * 13 core flows from spec (hover behavior, cache, comments, empty lines,
+ * concurrent hovers, extension disabled, modal suppression, structural vs simple
+ * highlighting, highlighting fallback, unsupported languages, non-code files).
+ * Verifies CodeLensHoverProvider in hoverProvider.ts.
+ */
+describe("CodeLensHoverProvider — 13 core flows (spec)", () => {
+  const detector = new CodeStructureDetector();
+  const extractor = new ContextExtractor();
+  let provider: CodeLensHoverProvider;
+
+  beforeEach(() => {
+    mockWindow.visibleTextEditors = [];
+    mockWindow.activeTextEditor = null;
+    cacheGet.mockReturnValue("Cached explanation");
+    cacheSet.mockClear();
+    aiExplain.mockReturnValue(Promise.resolve(""));
+    cancelCalls.length = 0;
+    provider = new CodeLensHoverProvider();
+  });
+
+  afterEach(() => {
+    provider?.dispose();
+  });
+
+  /** Flow 1: Hover on code — cache hit → returns Hover and applies decoration. */
+  it("Flow 1 — cache hit: returns Hover and applies highlight", () => {
+    const lines = ["const x = 1;"];
+    const doc = makeDocument(lines, "typescript");
+    const setDecorations = vi.fn();
+    const editor = { document: doc, setDecorations };
+    mockWindow.visibleTextEditors = [editor];
+    mockWindow.activeTextEditor = editor;
+
+    const result = provider.provideHover(doc, pos(0, 0), coreFlowToken);
+
+    expect(result).not.toBeNull();
+    expect(setDecorations).toHaveBeenCalled();
+    const appliedRanges = setDecorations.mock.calls[
+      setDecorations.mock.calls.length - 1
+    ][1] as vscode.Range[];
+    expect(appliedRanges).toHaveLength(1);
+    expect(appliedRanges[0].start.line).toBe(0);
+    expect(appliedRanges[0].end.line).toBe(0);
+  });
+
+  /** Flow 2: Hover on code — cache miss → returns null, fetches in background; re-hover shows result. */
+  it("Flow 2 — cache miss: returns null and triggers background fetch", async () => {
+    cacheGet.mockReturnValue(null);
+    const lines = ["const y = 2;"];
+    const doc = makeDocument(lines, "typescript");
+    const editor = { document: doc, setDecorations: vi.fn() };
+    mockWindow.visibleTextEditors = [editor];
+    mockWindow.activeTextEditor = editor;
+
+    const result = provider.provideHover(doc, pos(0, 0), coreFlowToken);
+
+    expect(result).toBeNull();
+    expect(aiExplain).toHaveBeenCalled();
+    await aiExplain.mock.results[0]?.value;
+    expect(cacheSet).toHaveBeenCalled();
+    cacheGet.mockReturnValue("Fetched explanation");
+    const second = provider.provideHover(doc, pos(0, 0), coreFlowToken);
+    expect(second).not.toBeNull();
+  });
+
+  /** Flow 3: Hover on comments → returns null. */
+  it("Flow 3 — comments: returns null", () => {
+    const lines = ["// single line comment", "const x = 1;"];
+    const doc = makeDocument(lines, "typescript");
+    mockWindow.visibleTextEditors = [];
+    mockWindow.activeTextEditor = null;
+
+    const result = provider.provideHover(doc, pos(0, 5), coreFlowToken);
+
+    expect(result).toBeNull();
+    expect(detector.isComment(doc, pos(0, 5))).toBe(true);
+  });
+
+  /** Flow 4: Empty line — not in block returns null; empty line in block uses previous non-blank. */
+  it("Flow 4a — empty line not in block: returns null", () => {
+    const lines = ["", "const x = 1;"];
+    const doc = makeDocument(lines, "typescript");
+    mockWindow.visibleTextEditors = [];
+    mockWindow.activeTextEditor = null;
+
+    const result = provider.provideHover(doc, pos(0, 0), coreFlowToken);
+
+    expect(result).toBeNull();
+  });
+
+  it("Flow 4b — empty line in block: uses previous non-blank and returns hover when cached", () => {
+    const lines = ["function f() {", "  const x = 1;", "", "  return x;", "}"];
+    const doc = makeDocument(lines, "typescript");
+    const setDecorations = vi.fn();
+    const editor = { document: doc, setDecorations };
+    mockWindow.visibleTextEditors = [editor];
+    mockWindow.activeTextEditor = editor;
+    expect(detector.isEmptyLineInBlock(doc, pos(2, 0))).toBe(true);
+
+    const result = provider.provideHover(doc, pos(2, 0), coreFlowToken);
+
+    expect(result).not.toBeNull();
+    expect(setDecorations).toHaveBeenCalled();
+  });
+
+  /** Flow 5: Concurrent hovers — previous fetch cancelled when new hover occurs. */
+  it("Flow 5 — concurrent hovers: previous fetch is cancelled", async () => {
+    cacheGet.mockReturnValue(null);
+    const lines = ["const a = 1;", "const b = 2;"];
+    const doc = makeDocument(lines, "typescript");
+    const editor = { document: doc, setDecorations: vi.fn() };
+    mockWindow.visibleTextEditors = [editor];
+    mockWindow.activeTextEditor = editor;
+
+    provider.provideHover(doc, pos(0, 0), coreFlowToken);
+    provider.provideHover(doc, pos(1, 0), coreFlowToken);
+
+    expect(cancelCalls.length).toBeGreaterThanOrEqual(1);
+  });
+
+  /** Flow 6: Re-hover after cache miss completes shows result (covered by Flow 2). */
+  it("Flow 6 — re-hover after fetch: shows cached result", async () => {
+    let stored: string | null = null;
+    cacheGet.mockImplementation(() => stored);
+    cacheSet.mockImplementation((_code: string, explanation: string) => {
+      stored = explanation;
+    });
+    const lines = ["const z = 3;"];
+    const doc = makeDocument(lines, "typescript");
+    const editor = { document: doc, setDecorations: vi.fn() };
+    mockWindow.visibleTextEditors = [editor];
+    mockWindow.activeTextEditor = editor;
+
+    const first = provider.provideHover(doc, pos(0, 0), coreFlowToken);
+    expect(first).toBeNull();
+    await aiExplain.mock.results[aiExplain.mock.results.length - 1]?.value;
+
+    const second = provider.provideHover(doc, pos(0, 0), coreFlowToken);
+    expect(second).not.toBeNull();
+  });
+
+  /** Flow 7: Extension disabled — hover not registered (validated in extension.ts; provider has no enabled check). */
+  it("Flow 7 — provider has no enabled gate: when called, returns hover on cache hit", () => {
+    const lines = ["const x = 1;"];
+    const doc = makeDocument(lines, "typescript");
+    const setDecorations = vi.fn();
+    const editor = { document: doc, setDecorations };
+    mockWindow.visibleTextEditors = [editor];
+    mockWindow.activeTextEditor = editor;
+
+    const result = provider.provideHover(doc, pos(0, 0), coreFlowToken);
+
+    expect(result).not.toBeNull();
+  });
+
+  /** Flow 8: Modal suppression — no modal on hover (tooltip only); showInformationMessage not called. */
+  it("Flow 8 — no modal on hover: only hover content returned", () => {
+    const showMessage = vi.fn();
+    (
+      mockWindow as { showInformationMessage?: ReturnType<typeof vi.fn> }
+    ).showInformationMessage = showMessage;
+    const lines = ["const x = 1;"];
+    const doc = makeDocument(lines, "typescript");
+    const editor = { document: doc, setDecorations: vi.fn() };
+    mockWindow.visibleTextEditors = [editor];
+    mockWindow.activeTextEditor = editor;
+
+    provider.provideHover(doc, pos(0, 0), coreFlowToken);
+
+    expect(showMessage).not.toHaveBeenCalled();
+  });
+
+  /** Flow 9: Structural highlighting — full block range. */
+  it("Flow 9 — structural: full block highlighted", () => {
+    const lines = ["function foo() {", "  const a = 1;", "  return a;", "}"];
+    const doc = makeDocument(lines, "typescript");
+    const setDecorations = vi.fn();
+    const editor = { document: doc, setDecorations };
+    mockWindow.visibleTextEditors = [editor];
+    mockWindow.activeTextEditor = editor;
+
+    provider.provideHover(doc, pos(0, 0), coreFlowToken);
+
+    expect(setDecorations).toHaveBeenCalled();
+    const ranges = setDecorations.mock.calls[
+      setDecorations.mock.calls.length - 1
+    ][1] as vscode.Range[];
+    expect(ranges[0].start.line).toBe(0);
+    expect(ranges[0].end.line).toBe(2);
+  });
+
+  /** Flow 10: Simple highlighting — single line. */
+  it("Flow 10 — simple: single line highlighted", () => {
+    const lines = ["const x = 1;", "const y = 2;"];
+    const doc = makeDocument(lines, "typescript");
+    const setDecorations = vi.fn();
+    const editor = { document: doc, setDecorations };
+    mockWindow.visibleTextEditors = [editor];
+    mockWindow.activeTextEditor = editor;
+
+    provider.provideHover(doc, pos(0, 0), coreFlowToken);
+
+    expect(setDecorations).toHaveBeenCalled();
+    const ranges = setDecorations.mock.calls[
+      setDecorations.mock.calls.length - 1
+    ][1] as vscode.Range[];
+    expect(ranges[0].start.line).toBe(0);
+    expect(ranges[0].end.line).toBe(0);
+  });
+
+  /** Flow 11: Highlighting fallback — getBlockRange throws → use line range (code path in getHighlightRange). */
+  it("Flow 11 — highlighting: single-line and block ranges applied per classification", () => {
+    const linesSimple = ["return 0;"];
+    const docSimple = makeDocument(linesSimple, "typescript");
+    const setDecorationsSimple = vi.fn();
+    mockWindow.visibleTextEditors = [
+      { document: docSimple, setDecorations: setDecorationsSimple },
+    ];
+    mockWindow.activeTextEditor = mockWindow.visibleTextEditors[0];
+    provider.provideHover(docSimple, pos(0, 0), coreFlowToken);
+    expect(setDecorationsSimple.mock.calls[0][1][0].start.line).toBe(0);
+    expect(setDecorationsSimple.mock.calls[0][1][0].end.line).toBe(0);
+
+    const linesStructural = ["if (x) {", "  foo();", "}"];
+    const docStructural = makeDocument(linesStructural, "typescript");
+    const setDecorationsStructural = vi.fn();
+    mockWindow.visibleTextEditors = [
+      { document: docStructural, setDecorations: setDecorationsStructural },
+    ];
+    mockWindow.activeTextEditor = mockWindow.visibleTextEditors[0];
+    provider.provideHover(docStructural, pos(1, 2), coreFlowToken);
+    const expected = extractor.getBlockRange(
+      docStructural,
+      pos(1, 2),
+      detector.classify(docStructural, pos(1, 2))
+    );
+    expect(setDecorationsStructural.mock.calls[0][1][0].start.line).toBe(
+      expected.start.line
+    );
+    expect(setDecorationsStructural.mock.calls[0][1][0].end.line).toBe(
+      expected.end.line
+    );
+  });
+
+  /** Flow 12: Unsupported languages — still provide hover (no language gate). */
+  it("Flow 12 — unsupported language (plaintext): hover still returned on cache hit", () => {
+    const lines = ["some text"];
+    const doc = makeDocument(lines, "plaintext");
+    const setDecorations = vi.fn();
+    const editor = { document: doc, setDecorations };
+    mockWindow.visibleTextEditors = [editor];
+    mockWindow.activeTextEditor = editor;
+
+    const result = provider.provideHover(doc, pos(0, 0), coreFlowToken);
+
+    expect(result).not.toBeNull();
+    expect(setDecorations).toHaveBeenCalled();
+  });
+
+  /** Flow 13: Non-code files — hover works (file/untitled schemes; no gate in provider). */
+  it("Flow 13 — non-code file content: hover returned on cache hit", () => {
+    const lines = ["# Markdown heading", "Hello world"];
+    const doc = makeDocument(lines, "markdown");
+    const setDecorations = vi.fn();
+    const editor = { document: doc, setDecorations };
+    mockWindow.visibleTextEditors = [editor];
+    mockWindow.activeTextEditor = editor;
+
+    const result = provider.provideHover(doc, pos(1, 0), coreFlowToken);
+
+    expect(result).not.toBeNull();
+  });
+});
+
+/** Prefix used in hoverProvider for cached error messages; must match hoverProvider.ts. */
+const CACHED_ERROR_PREFIX = "Something went wrong:";
+
+describe("CodeLensHoverProvider — error scenarios (caching and Retry link)", () => {
+  let provider: CodeLensHoverProvider;
+
+  beforeEach(() => {
+    mockWindow.visibleTextEditors = [];
+    mockWindow.activeTextEditor = null;
+    cacheGet.mockReturnValue(null);
+    aiExplain.mockReset();
+    cacheSet.mockClear();
+    provider = new CodeLensHoverProvider();
+  });
+
+  afterEach(() => {
+    provider?.dispose();
+  });
+
+  it("on API/network error: fetchExplanation caches error message with CACHED_ERROR_PREFIX", async () => {
+    cacheGet.mockReturnValue(null);
+    aiExplain.mockRejectedValue(new Error("Rate limit exceeded"));
+    const lines = ["const x = 1;"];
+    const doc = makeDocument(lines, "typescript");
+    const editor = { document: doc, setDecorations: vi.fn() };
+    mockWindow.visibleTextEditors = [editor];
+    mockWindow.activeTextEditor = editor;
+
+    provider.provideHover(doc, pos(0, 0), coreFlowToken);
+    await vi.runAllTimersAsync?.().catch(() => {});
+    await aiExplain.mock.results[0]?.value?.catch(() => {});
+
+    expect(cacheSet).toHaveBeenCalled();
+    const [, explanation] = cacheSet.mock.calls[cacheSet.mock.calls.length - 1];
+    expect(typeof explanation).toBe("string");
+    expect(explanation.startsWith(CACHED_ERROR_PREFIX)).toBe(true);
+  });
+
+  it("on timeout: cached error includes message", async () => {
+    cacheGet.mockReturnValue(null);
+    aiExplain.mockRejectedValue(new Error("The request timed out"));
+    const lines = ["const y = 2;"];
+    const doc = makeDocument(lines, "typescript");
+    const editor = { document: doc, setDecorations: vi.fn() };
+    mockWindow.visibleTextEditors = [editor];
+    mockWindow.activeTextEditor = editor;
+
+    provider.provideHover(doc, pos(0, 0), coreFlowToken);
+    await vi.runAllTimersAsync?.().catch(() => {});
+    await aiExplain.mock.results[0]?.value?.catch(() => {});
+
+    expect(cacheSet).toHaveBeenCalled();
+    const [, explanation] = cacheSet.mock.calls[cacheSet.mock.calls.length - 1];
+    expect(explanation).toContain("Something went wrong:");
+    expect(explanation).toMatch(/timed out|Try again/);
+  });
+
+  it("when cache returns cached error: hover content includes Retry link", () => {
+    const cachedError = `${CACHED_ERROR_PREFIX} Rate limit exceeded. Try again or check the output panel for details.`;
+    cacheGet.mockReturnValue(cachedError);
+    const lines = ["const x = 1;"];
+    const doc = makeDocument(lines, "typescript");
+    const editor = { document: doc, setDecorations: vi.fn() };
+    mockWindow.visibleTextEditors = [editor];
+    mockWindow.activeTextEditor = editor;
+
+    const result = provider.provideHover(doc, pos(0, 0), coreFlowToken);
+
+    expect(result).not.toBeNull();
+    expect(result!.content).toBeDefined();
+    const md = result!.content as { appendMarkdown: ReturnType<typeof vi.fn> };
+    const appendCalls = md.appendMarkdown?.mock?.calls ?? [];
+    const allAppended = appendCalls.map((c: unknown[]) => String(c[0])).join("");
+    expect(allAppended).toContain("Retry");
+    expect(allAppended).toContain("retryHoverExplanation");
+  });
+
+  it("when cache returns success: hover content does not include Retry link", () => {
+    cacheGet.mockReturnValue("This code declares a constant.");
+    const lines = ["const x = 1;"];
+    const doc = makeDocument(lines, "typescript");
+    const editor = { document: doc, setDecorations: vi.fn() };
+    mockWindow.visibleTextEditors = [editor];
+    mockWindow.activeTextEditor = editor;
+
+    const result = provider.provideHover(doc, pos(0, 0), coreFlowToken);
+
+    expect(result).not.toBeNull();
+    const md = result!.content as { appendMarkdown: ReturnType<typeof vi.fn> };
+    const appendCalls = md.appendMarkdown?.mock?.calls ?? [];
+    const allAppended = appendCalls.map((c: unknown[]) => String(c[0])).join("");
+    expect(allAppended).not.toContain("retryHoverExplanation");
+  });
+});
+
+/** Target: highlighting must feel instant. */
+const HIGHLIGHT_LATENCY_MS = 100;
+
+describe("ContextExtractor — malformed syntax and extreme cases", () => {
+  let extractor: ContextExtractor;
+
+  beforeEach(() => {
+    extractor = new ContextExtractor();
+  });
+
+  describe("malformed syntax (missing braces, incomplete, mixed indent)", () => {
+    it("getBlockRange on unclosed if block uses indentation heuristic", () => {
+      const lines = ["if (x)", "  foo();", "  bar();"];
+      const doc = makeDocument(lines, "typescript");
+      const range = extractor.getBlockRange(doc, pos(1, 2));
+      expect(range.start.line).toBeGreaterThanOrEqual(0);
+      expect(range.end.line).toBeLessThanOrEqual(2);
+    });
+
+    it("getBlockRange on line with only opening brace returns bounded range", () => {
+      const lines = ["{", "  x = 1;", "}"];
+      const doc = makeDocument(lines, "typescript");
+      const range = extractor.getBlockRange(doc, pos(1, 0));
+      expect(range.start.line).toBeGreaterThanOrEqual(0);
+      expect(range.end.line).toBeLessThanOrEqual(2);
+      expect(range.end.line).toBeGreaterThanOrEqual(range.start.line);
+    });
+
+    it("extract on mixed tab/space indent returns code and context", () => {
+      const lines = ["function f() {", "\tconst x = 1;", "}"];
+      const doc = makeDocument(lines, "typescript");
+      const result = extractor.extract(doc, pos(1, 0));
+      expect(result.code.trim().length).toBeGreaterThan(0);
+      expect(typeof result.context).toBe("string");
+    });
+
+    it("empty document: getBlockRange returns (0,0)-(0,0)", () => {
+      const doc = makeDocument([], "typescript");
+      const range = extractor.getBlockRange(doc, pos(0, 0));
+      expect(range.start.line).toBe(0);
+      expect(range.start.character).toBe(0);
+      expect(range.end.line).toBe(0);
+      expect(range.end.character).toBe(0);
+    });
+  });
+
+  describe("extreme cases (very long block, deeply nested, single-line, Unicode)", () => {
+    it("getBlockRange in 100+ line function returns bounded range", () => {
+      const lines = ["function big() {"].concat(
+        Array.from({ length: 120 }, (_, i) => "  const x" + i + " = 1;"),
+        ["}"]
+      );
+      const doc = makeDocument(lines, "typescript");
+      const range = extractor.getBlockRange(doc, pos(60, 2), "structural");
+      expect(range.start.line).toBe(0);
+      expect(range.end.line).toBeLessThanOrEqual(120);
+      expect(range.end.line).toBeGreaterThanOrEqual(0);
+    });
+
+    it("getBlockRange with 10+ level nesting returns correct block", () => {
+      const depth = 12;
+      const lines: string[] = [];
+      for (let i = 0; i < depth; i++) {
+        lines.push("  ".repeat(i) + "if (x) {");
+      }
+      lines.push("  ".repeat(depth) + "return 1;");
+      for (let i = depth - 1; i >= 0; i--) {
+        lines.push("  ".repeat(i) + "}");
+      }
+      const doc = makeDocument(lines, "typescript");
+      const range = extractor.getBlockRange(doc, pos(depth, 0), "simple");
+      expect(range.start.line).toBe(depth);
+      expect(range.end.line).toBe(depth);
+    });
+
+    it("single-line file: extract returns that line as code", () => {
+      const doc = makeDocument(["const x = 1;"], "typescript");
+      const result = extractor.extract(doc, pos(0, 0));
+      expect(result.code).toBe("const x = 1;");
+      expect(result.context).toBe("");
+    });
+
+    it("single-line file: getBlockRange returns single line", () => {
+      const doc = makeDocument(["const x = 1;"], "typescript");
+      const range = extractor.getBlockRange(doc, pos(0, 0), "simple");
+      expect(range.start.line).toBe(0);
+      expect(range.end.line).toBe(0);
+    });
+
+    it("Unicode in code: extract and getBlockRange handle gracefully", () => {
+      const lines = ["const 变量 = 1;", "return 变量;"];
+      const doc = makeDocument(lines, "typescript");
+      const result = extractor.extract(doc, pos(0, 0));
+      expect(result.code).toContain("变量");
+      const range = extractor.getBlockRange(doc, pos(0, 0), "simple");
+      expect(range.start.line).toBe(0);
+      expect(range.end.line).toBe(0);
+    });
+  });
+});
+
+describe("ContextExtractor performance", () => {
+  const detector = new CodeStructureDetector();
+  const extractor = new ContextExtractor();
+
+  it("getBlockRange on large file (1000+ lines) completes within target", () => {
+    const lineCount = 1200;
+    const lines = Array.from({ length: lineCount }, (_, i) =>
+      i % 3 === 0 ? "function foo() {" : i % 3 === 1 ? "  const x = 1;" : "}"
+    );
+    const doc = makeDocument(lines, "typescript");
+    const position = pos(600, 2);
+    const classification = detector.classify(doc, position);
+    const start = performance.now();
+    for (let i = 0; i < 10; i++) {
+      extractor.getBlockRange(doc, position, classification);
+    }
+    const elapsed = (performance.now() - start) / 10;
+    expect(elapsed).toBeLessThan(HIGHLIGHT_LATENCY_MS);
+  });
+
+  it("getBlockRange with deeply nested code (10+ levels) completes within target", () => {
+    const depth = 15;
+    const lines: string[] = [];
+    for (let i = 0; i < depth; i++) {
+      lines.push("  ".repeat(i) + "if (x) {");
+    }
+    lines.push("  ".repeat(depth) + "return 1;");
+    for (let i = depth - 1; i >= 0; i--) {
+      lines.push("  ".repeat(i) + "}");
+    }
+    const doc = makeDocument(lines, "typescript");
+    const position = pos(depth, depth * 2);
+    const classification = detector.classify(doc, position);
+    const start = performance.now();
+    for (let i = 0; i < 10; i++) {
+      extractor.getBlockRange(doc, position, classification);
+    }
+    const elapsed = (performance.now() - start) / 10;
+    expect(elapsed).toBeLessThan(HIGHLIGHT_LATENCY_MS);
+  });
+
+  it("full highlight path (isComment + classify + extract + getBlockRange) feels instant", () => {
+    const lines = [
+      "function foo() {",
+      "  if (x) {",
+      "    const a = 1;",
+      "    return a;",
+      "  }",
+      "  return 0;",
+      "}",
+    ];
+    const doc = makeDocument(lines, "typescript");
+    const position = pos(2, 4);
+    const start = performance.now();
+    for (let i = 0; i < 50; i++) {
+      if (detector.isComment(doc, position)) continue;
+      const classification = detector.classify(doc, position);
+      extractor.extract(doc, position);
+      extractor.getBlockRange(doc, position, classification);
+    }
+    const elapsed = (performance.now() - start) / 50;
+    expect(elapsed).toBeLessThan(HIGHLIGHT_LATENCY_MS);
   });
 });

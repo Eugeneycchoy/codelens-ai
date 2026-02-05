@@ -666,6 +666,225 @@ describe("CodeStructureDetector.isEmptyLineInBlock", () => {
   });
 });
 
+/**
+ * Explicit validation of all detection capabilities across supported languages
+ * (TypeScript/JavaScript and Python) as requested for isComment, classify, isEmptyLineInBlock.
+ */
+describe("Detection capabilities across supported languages", () => {
+  const detector = new CodeStructureDetector();
+
+  describe("TypeScript/JavaScript — comment detection", () => {
+    const langs = ["typescript", "javascript"] as const;
+
+    it("validates // single-line comment", () => {
+      for (const lang of langs) {
+        const doc = makeDocument(["  // comment"], lang);
+        expect(detector.isComment(doc, pos(0, 0))).toBe(true);
+        expect(detector.isComment(doc, pos(0, 5))).toBe(true);
+      }
+    });
+
+    it("validates /* */ multi-line comment", () => {
+      for (const lang of langs) {
+        const doc = makeDocument(["/* start", "  middle", "*/ end"], lang);
+        expect(detector.isComment(doc, pos(0, 0))).toBe(true);
+        expect(detector.isComment(doc, pos(1, 2))).toBe(true);
+        expect(detector.isComment(doc, pos(2, 0))).toBe(true);
+        // Position at the closing "*/" (char 2) is inside; after "*/" is outside
+        expect(detector.isComment(doc, pos(2, 1))).toBe(true);
+      }
+    });
+
+    it("validates /** */ doc comment", () => {
+      for (const lang of langs) {
+        const doc = makeDocument(
+          ["/**", " * JSDoc", " */", "const x = 1;"],
+          langs[0]
+        );
+        expect(detector.isComment(doc, pos(0, 0))).toBe(true);
+        expect(detector.isComment(doc, pos(1, 2))).toBe(true);
+        expect(detector.isComment(doc, pos(2, 1))).toBe(true);
+        expect(detector.isComment(doc, pos(3, 0))).toBe(false);
+      }
+    });
+  });
+
+  describe("TypeScript/JavaScript — structural elements (classify)", () => {
+    const lang = "typescript";
+
+    it("classifies if, for, while as structural", () => {
+      expect(
+        detector.classify(makeDocument(["if (x) {}"], lang), pos(0, 0))
+      ).toBe("structural");
+      expect(
+        detector.classify(
+          makeDocument(["for (let i = 0; i < n; i++) {}"], lang),
+          pos(0, 0)
+        )
+      ).toBe("structural");
+      expect(
+        detector.classify(makeDocument(["while (cond) {}"], lang), pos(0, 0))
+      ).toBe("structural");
+    });
+
+    it("classifies function, class, try, switch as structural", () => {
+      expect(
+        detector.classify(makeDocument(["function f() {}"], lang), pos(0, 0))
+      ).toBe("structural");
+      expect(
+        detector.classify(makeDocument(["class C {}"], lang), pos(0, 0))
+      ).toBe("structural");
+      expect(
+        detector.classify(makeDocument(["try { x(); }"], lang), pos(0, 0))
+      ).toBe("structural");
+      expect(
+        detector.classify(makeDocument(["switch (x) {}"], lang), pos(0, 0))
+      ).toBe("structural");
+    });
+  });
+
+  describe("TypeScript/JavaScript — simple statements (classify)", () => {
+    const lang = "typescript";
+
+    it("classifies const, let, var, return, import, export as simple", () => {
+      expect(
+        detector.classify(makeDocument(["const a = 1;"], lang), pos(0, 0))
+      ).toBe("simple");
+      expect(
+        detector.classify(makeDocument(["let b = 2;"], lang), pos(0, 0))
+      ).toBe("simple");
+      expect(
+        detector.classify(makeDocument(["var c = 3;"], lang), pos(0, 0))
+      ).toBe("simple");
+      expect(
+        detector.classify(makeDocument(["return x;"], lang), pos(0, 0))
+      ).toBe("simple");
+      expect(
+        detector.classify(makeDocument(["return;"], lang), pos(0, 0))
+      ).toBe("simple");
+      expect(
+        detector.classify(
+          makeDocument(["import { x } from 'm';"], lang),
+          pos(0, 0)
+        )
+      ).toBe("simple");
+      expect(
+        detector.classify(makeDocument(["export { a };"], lang), pos(0, 0))
+      ).toBe("simple");
+      expect(
+        detector.classify(makeDocument(["export default f;"], lang), pos(0, 0))
+      ).toBe("simple");
+    });
+  });
+
+  describe("Python — comment detection", () => {
+    const lang = "python";
+
+    it("validates # single-line comment", () => {
+      const doc = makeDocument(["  # comment", "x = 1"], lang);
+      expect(detector.isComment(doc, pos(0, 0))).toBe(true);
+      expect(detector.isComment(doc, pos(0, 5))).toBe(true);
+      expect(detector.isComment(doc, pos(1, 0))).toBe(false);
+    });
+
+    it('validates """ """ multi-line docstring', () => {
+      const doc = makeDocument(
+        ['"""', "docstring line 1", "line 2", '"""', "def f():"],
+        lang
+      );
+      expect(detector.isComment(doc, pos(0, 0))).toBe(true);
+      expect(detector.isComment(doc, pos(1, 0))).toBe(true);
+      expect(detector.isComment(doc, pos(2, 3))).toBe(true);
+      expect(detector.isComment(doc, pos(3, 0))).toBe(true);
+      expect(detector.isComment(doc, pos(4, 0))).toBe(false);
+    });
+  });
+
+  describe("Python — structural elements (classify)", () => {
+    const lang = "python";
+
+    it("classifies if, elif, for, while, def, class, try, with as structural", () => {
+      expect(detector.classify(makeDocument(["if x:"], lang), pos(0, 0))).toBe(
+        "structural"
+      );
+      expect(
+        detector.classify(makeDocument(["elif y:"], lang), pos(0, 0))
+      ).toBe("structural");
+      expect(
+        detector.classify(
+          makeDocument(["for i in range(10):"], lang),
+          pos(0, 0)
+        )
+      ).toBe("structural");
+      expect(
+        detector.classify(makeDocument(["while True:"], lang), pos(0, 0))
+      ).toBe("structural");
+      expect(
+        detector.classify(makeDocument(["def foo():"], lang), pos(0, 0))
+      ).toBe("structural");
+      expect(
+        detector.classify(makeDocument(["class A:"], lang), pos(0, 0))
+      ).toBe("structural");
+      expect(detector.classify(makeDocument(["try:"], lang), pos(0, 0))).toBe(
+        "structural"
+      );
+      expect(
+        detector.classify(makeDocument(["with open(f) as x:"], lang), pos(0, 0))
+      ).toBe("structural");
+    });
+  });
+
+  describe("Python — simple statements (classify)", () => {
+    const lang = "python";
+
+    it("classifies return, import, from as simple", () => {
+      expect(
+        detector.classify(makeDocument(["return 42"], lang), pos(0, 0))
+      ).toBe("simple");
+      expect(detector.classify(makeDocument(["return"], lang), pos(0, 0))).toBe(
+        "simple"
+      );
+      expect(
+        detector.classify(makeDocument(["import os"], lang), pos(0, 0))
+      ).toBe("simple");
+      expect(
+        detector.classify(makeDocument(["from x import y"], lang), pos(0, 0))
+      ).toBe("simple");
+    });
+  });
+
+  describe("isEmptyLineInBlock — TypeScript/JavaScript and Python", () => {
+    it("returns true for empty line inside TS function body", () => {
+      const doc = makeDocument(
+        ["function f() {", "  const x = 1;", "", "  return x;", "}"],
+        "typescript"
+      );
+      expect(detector.isEmptyLineInBlock(doc, pos(2, 0))).toBe(true);
+    });
+
+    it("returns true for empty line inside Python def body", () => {
+      const doc = makeDocument(
+        ["def f():", "    x = 1", "", "    return x"],
+        "python"
+      );
+      expect(detector.isEmptyLineInBlock(doc, pos(2, 0))).toBe(true);
+    });
+
+    it("returns false for empty line between top-level statements (TS)", () => {
+      const doc = makeDocument(
+        ["const a = 1;", "", "const b = 2;"],
+        "typescript"
+      );
+      expect(detector.isEmptyLineInBlock(doc, pos(1, 0))).toBe(false);
+    });
+
+    it("returns false for empty line between top-level statements (Python)", () => {
+      const doc = makeDocument(["x = 1", "", "y = 2"], "python");
+      expect(detector.isEmptyLineInBlock(doc, pos(1, 0))).toBe(false);
+    });
+  });
+});
+
 describe("CodeStructureDetector integration", () => {
   const detector = new CodeStructureDetector();
 
@@ -790,5 +1009,330 @@ describe("CodeStructureDetector integration", () => {
     expect(detector.classify(doc, pos(3, 0))).toBe("structural");
     expect(detector.isEmptyLineInBlock(doc, pos(4, 0))).toBe(true);
     expect(detector.classify(doc, pos(5, 0))).toBe("simple");
+  });
+});
+
+/** Target: highlighting/classification should feel instant (<100ms). */
+const HIGHLIGHT_LATENCY_MS = 100;
+/** isComment backward scan is capped at 100 lines; should not lag. */
+const IS_COMMENT_SCAN_MS = 50;
+
+describe("CodeStructureDetector — malformed syntax and mixed indentation", () => {
+  const detector = new CodeStructureDetector();
+
+  function expectClassify(
+    lines: string[],
+    lang: string,
+    lineIndex: number,
+    expected: ClassificationResult,
+    character = 0
+  ) {
+    const doc = makeDocument(lines, lang);
+    expect(detector.classify(doc, pos(lineIndex, character))).toBe(expected);
+  }
+
+  describe("missing braces / incomplete statements", () => {
+    const lang = "typescript";
+
+    it("classifies line with unclosed if (missing brace) as structural by keyword", () => {
+      expectClassify(["if (x)", "  foo();"], lang, 0, "structural");
+    });
+
+    it("classifies line with only opening brace as unknown (no keyword)", () => {
+      const doc = makeDocument(["{", "  x = 1;", "}"], lang);
+      expect(detector.classify(doc, pos(0, 0))).toBe("unknown");
+    });
+
+    it("classifies incomplete function declaration (no body) as structural", () => {
+      expectClassify(["function foo()"], lang, 0, "structural");
+    });
+
+    it("classifies orphan closing brace line as unknown", () => {
+      const doc = makeDocument(["}", "const x = 1;"], lang);
+      expect(detector.classify(doc, pos(0, 0))).toBe("unknown");
+    });
+  });
+
+  describe("mixed indentation (tabs and spaces)", () => {
+    const lang = "typescript";
+
+    it("treats tab-indented line after space-indented structural: const matches simple first", () => {
+      const doc = makeDocument(["function f() {", "\tconst x = 1;", "}"], lang);
+      expect(detector.classify(doc, pos(1, 0))).toBe("simple");
+    });
+
+    it("treats space-indented line after tab-indented structural as structural", () => {
+      const doc = makeDocument(["if (x) {", "    foo();", "}"], lang);
+      expect(detector.classify(doc, pos(1, 0))).toBe("structural");
+    });
+
+    it("getLeadingWhitespaceLength counts both spaces and tabs for indent comparison", () => {
+      const doc = makeDocument(["\t\t  return 1;"], lang);
+      expect(detector.classify(doc, pos(0, 0))).toBe("simple");
+    });
+  });
+
+  describe("Python — mixed indentation", () => {
+    const lang = "python";
+
+    it("classifies def with mixed indent in body (spaces then tabs): body line and return", () => {
+      const doc = makeDocument(["def f():", "\tx = 1", "    return x"], lang);
+      expect(["structural", "simple"]).toContain(detector.classify(doc, pos(1, 0)));
+      expect(detector.classify(doc, pos(2, 0))).toBe("simple");
+    });
+  });
+});
+
+describe("CodeStructureDetector — extreme cases", () => {
+  const detector = new CodeStructureDetector();
+
+  describe("empty and single-line files", () => {
+    it("empty file: classify at (0,0) returns unknown", () => {
+      const doc = makeDocument([], "typescript");
+      expect(detector.classify(doc, pos(0, 0))).toBe("unknown");
+    });
+
+    it("empty file: isComment returns false", () => {
+      const doc = makeDocument([], "typescript");
+      expect(detector.isComment(doc, pos(0, 0))).toBe(false);
+    });
+
+    it("empty file: isEmptyLineInBlock returns false", () => {
+      const doc = makeDocument([], "typescript");
+      expect(detector.isEmptyLineInBlock(doc, pos(0, 0))).toBe(false);
+    });
+
+    it("single-line file: classify works", () => {
+      expect(
+        detector.classify(makeDocument(["const x = 1;"], "typescript"), pos(0, 0))
+      ).toBe("simple");
+      expect(
+        detector.classify(makeDocument(["function f() {}"], "typescript"), pos(0, 0))
+      ).toBe("structural");
+    });
+
+    it("single-line file: isComment detects single-line comment", () => {
+      const doc = makeDocument(["// only line"], "typescript");
+      expect(detector.isComment(doc, pos(0, 0))).toBe(true);
+    });
+
+    it("single-line file: isEmptyLineInBlock returns false for the only line when non-empty", () => {
+      const doc = makeDocument(["x = 1"], "python");
+      expect(detector.isEmptyLineInBlock(doc, pos(0, 0))).toBe(false);
+    });
+  });
+
+  describe("Unicode characters", () => {
+    it("classifies line with Unicode identifier (TypeScript)", () => {
+      const doc = makeDocument(["const 变量 = 1;"], "typescript");
+      expect(detector.classify(doc, pos(0, 0))).toBe("simple");
+    });
+
+    it("classifies line with Unicode in string literal", () => {
+      const doc = makeDocument(["const x = '日本語';"], "typescript");
+      expect(detector.classify(doc, pos(0, 0))).toBe("simple");
+    });
+
+    it("isComment: single-line comment with Unicode", () => {
+      const doc = makeDocument(["// コメント", "const x = 1;"], "typescript");
+      expect(detector.isComment(doc, pos(0, 0))).toBe(true);
+      expect(detector.isComment(doc, pos(1, 0))).toBe(false);
+    });
+
+    it("isEmptyLineInBlock: block with Unicode in code", () => {
+      const lines = ["function 测试() {", "  const 值 = 1;", "", "  return 值;", "}"];
+      const doc = makeDocument(lines, "typescript");
+      expect(detector.isEmptyLineInBlock(doc, pos(2, 0))).toBe(true);
+    });
+  });
+
+  describe("very long blocks (100+ lines)", () => {
+    it("classify in middle of 100+ line function body: const line is simple", () => {
+      const lines = ["function big() {"].concat(
+        Array.from({ length: 120 }, (_, i) => "  const x" + i + " = 1;"),
+        ["}"]
+      );
+      const doc = makeDocument(lines, "typescript");
+      expect(detector.classify(doc, pos(60, 2))).toBe("simple");
+    });
+
+    it("isEmptyLineInBlock true for empty line in middle of long block", () => {
+      const lines = ["if (x) {"]
+        .concat(Array.from({ length: 50 }, () => "  foo();"))
+        .concat(["", "  bar();", "}"]);
+      const doc = makeDocument(lines, "typescript");
+      expect(detector.isEmptyLineInBlock(doc, pos(51, 0))).toBe(true);
+    });
+  });
+
+  describe("deeply nested structures (10+ levels)", () => {
+    it("classify at depth 10: if line structural, return line simple", () => {
+      const depth = 12;
+      const lines: string[] = [];
+      for (let i = 0; i < depth; i++) {
+        lines.push("  ".repeat(i) + "if (x) {");
+      }
+      lines.push("  ".repeat(depth) + "return 1;");
+      for (let i = depth - 1; i >= 0; i--) {
+        lines.push("  ".repeat(i) + "}");
+      }
+      const doc = makeDocument(lines, "typescript");
+      expect(detector.classify(doc, pos(0, 0))).toBe("structural");
+      expect(detector.classify(doc, pos(depth, depth * 2))).toBe("simple");
+      expect(detector.classify(doc, pos(depth, 0))).toBe("simple");
+    });
+  });
+});
+
+describe("CodeStructureDetector — unsupported languages (fallback to generic heuristics)", () => {
+  const detector = new CodeStructureDetector();
+
+  function expectClassify(
+    lines: string[],
+    lang: string,
+    lineIndex: number,
+    expected: ClassificationResult
+  ) {
+    const doc = makeDocument(lines, lang);
+    expect(detector.classify(doc, pos(lineIndex, 0))).toBe(expected);
+  }
+
+  describe("Rust", () => {
+    const lang = "rust";
+
+    it("isSupported returns false", () => {
+      expect(detector.isSupported(lang)).toBe(false);
+    });
+
+    it("getLanguagePatterns returns fallback (C-style comments)", () => {
+      const patterns = detector.getLanguagePatterns(lang);
+      expect(patterns.comments.singleLine.test("  // rust comment")).toBe(true);
+      expect(patterns.structural.function).toBeDefined();
+    });
+
+    it("classify: fn or body line returns structural or unknown (no crash)", () => {
+      const doc = makeDocument(["fn main() {", "    let x = 1;", "}"], lang);
+      expect(["structural", "simple", "unknown"]).toContain(
+        detector.classify(doc, pos(0, 0))
+      );
+      expect(["structural", "simple", "unknown"]).toContain(
+        detector.classify(doc, pos(1, 0))
+      );
+    });
+
+    it("isComment: // comment detected by fallback", () => {
+      const doc = makeDocument(["// rust comment", "fn main() {}"], lang);
+      expect(detector.isComment(doc, pos(0, 0))).toBe(true);
+      expect(detector.isComment(doc, pos(1, 0))).toBe(false);
+    });
+  });
+
+  describe("Go", () => {
+    const lang = "go";
+
+    it("isSupported returns false", () => {
+      expect(detector.isSupported(lang)).toBe(false);
+    });
+
+    it("getLanguagePatterns returns fallback", () => {
+      const patterns = detector.getLanguagePatterns(lang);
+      expect(patterns.comments.singleLine.test("// go comment")).toBe(true);
+      expect(patterns.structural.function).toBeDefined();
+    });
+
+    it("classify: func or body line returns structural or unknown (no crash)", () => {
+      const doc = makeDocument(["func main() {", "\tfmt.Println(1)", "}"], lang);
+      expect(["structural", "simple", "unknown"]).toContain(
+        detector.classify(doc, pos(0, 0))
+      );
+      expect(["structural", "simple", "unknown"]).toContain(
+        detector.classify(doc, pos(1, 0))
+      );
+    });
+
+    it("isComment: // and /* */ work via fallback", () => {
+      const doc = makeDocument(["/* go block */", "func f() {}"], lang);
+      expect(detector.isComment(doc, pos(0, 1))).toBe(true);
+      expect(detector.isComment(doc, pos(1, 0))).toBe(false);
+    });
+  });
+
+  describe("Ruby", () => {
+    const lang = "ruby";
+
+    it("isSupported returns false", () => {
+      expect(detector.isSupported(lang)).toBe(false);
+    });
+
+    it("getLanguagePatterns returns fallback (# not in fallback singleLine)", () => {
+      const patterns = detector.getLanguagePatterns(lang);
+      expect(patterns.comments.singleLine.source).toBe(String(/^\s*\/\//).slice(1, -1));
+    });
+
+    it("classify: def line may match fallback function pattern", () => {
+      const doc = makeDocument(["def foo", "  x = 1", "end"], lang);
+      const c = detector.classify(doc, pos(0, 0));
+      expect(["structural", "unknown"]).toContain(c);
+    });
+
+    it("indentation-based block for body line", () => {
+      const doc = makeDocument(["def foo", "  x = 1", "end"], lang);
+      expect(detector.classify(doc, pos(1, 0))).toBe("structural");
+    });
+  });
+});
+
+describe("CodeStructureDetector performance", () => {
+  const detector = new CodeStructureDetector();
+
+  it("isComment backward scan (100-line cap) completes without lag", () => {
+    const lineCount = 150;
+    const lines = Array.from({ length: lineCount }, (_, i) =>
+      i === 0 ? "const x = 1;" : `  line${i};`
+    );
+    const doc = makeDocument(lines, "typescript");
+    const position = pos(lineCount - 1, 0);
+    const start = performance.now();
+    for (let i = 0; i < 20; i++) {
+      detector.isComment(doc, position);
+    }
+    const elapsed = (performance.now() - start) / 20;
+    expect(elapsed).toBeLessThan(IS_COMMENT_SCAN_MS);
+    expect(detector.isComment(doc, position)).toBe(false);
+  });
+
+  it("classify on large file (1000+ lines) completes within target", () => {
+    const lineCount = 1200;
+    const lines = Array.from({ length: lineCount }, (_, i) =>
+      i % 3 === 0 ? "function foo() {" : i % 3 === 1 ? "  const x = 1;" : "}"
+    );
+    const doc = makeDocument(lines, "typescript");
+    const position = pos(600, 2);
+    const start = performance.now();
+    for (let i = 0; i < 10; i++) {
+      detector.classify(doc, position);
+    }
+    const elapsed = (performance.now() - start) / 10;
+    expect(elapsed).toBeLessThan(HIGHLIGHT_LATENCY_MS);
+  });
+
+  it("classify with deeply nested code (10+ levels) completes within target", () => {
+    const depth = 15;
+    const lines: string[] = [];
+    for (let i = 0; i < depth; i++) {
+      lines.push("  ".repeat(i) + "if (x) {");
+    }
+    lines.push("  ".repeat(depth) + "return 1;");
+    for (let i = depth - 1; i >= 0; i--) {
+      lines.push("  ".repeat(i) + "}");
+    }
+    const doc = makeDocument(lines, "typescript");
+    const position = pos(depth, depth * 2);
+    const start = performance.now();
+    for (let i = 0; i < 10; i++) {
+      detector.classify(doc, position);
+    }
+    const elapsed = (performance.now() - start) / 10;
+    expect(elapsed).toBeLessThan(HIGHLIGHT_LATENCY_MS);
   });
 });
