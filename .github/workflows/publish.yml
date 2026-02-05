@@ -1,0 +1,40 @@
+name: Publish Extension
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js LTS
+        uses: actions/setup-node@v4
+        with:
+          node-version: "lts/*"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Version validation
+        run: bash scripts/validate-version.sh
+
+      - name: Build
+        run: npm run build
+
+      - name: Package
+        run: npx vsce package
+        env:
+          VSCE_SKIP_DEPENDENCY_CHECK: "true"
+
+      - name: Publish to Marketplace
+        run: |
+          VERSION="${GITHUB_REF#refs/tags/v}"
+          npx vsce publish --packagePath "codelens-ai-${VERSION}.vsix"
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
