@@ -235,6 +235,7 @@ function buildPythonClassificationPatterns(): ClassificationPatterns {
       /^\s*except\s+/,
       /^\s*except\s*:/,
       /^\s*finally\s*:/,
+      /^\s*with\s+/,
       /^\s+def\s+\w+\s*\(/,
     ],
     simple: [
@@ -469,6 +470,9 @@ export class CodeStructureDetector {
         new RegExp(patterns.comments.doc.start.source, "g")
       : null;
 
+    /** When multiSame, collect all delimiter positions across lines so start/end alternate globally. */
+    const multiSamePositions: { offset: number; len: number }[] = [];
+
     const addMatchesFromGlobal = (
       lineText: string,
       lineStartOffset: number,
@@ -509,20 +513,11 @@ export class CodeStructureDetector {
 
       if (multiSame) {
         multiStartG.lastIndex = 0;
-        const positions: { offset: number; len: number }[] = [];
         let m: RegExpExecArray | null;
         while ((m = multiStartG.exec(text)) !== null) {
           const offset = lineStart + m.index;
           if (offset <= positionOffset)
-            positions.push({ offset, len: m[0].length });
-        }
-        positions.sort((a, b) => a.offset - b.offset);
-        for (let k = 0; k < positions.length; k++) {
-          const { offset, len } = positions[k];
-          events.push({
-            offset: k % 2 === 0 ? offset : offset + len,
-            type: k % 2 === 0 ? "start" : "end",
-          });
+            multiSamePositions.push({ offset, len: m[0].length });
         }
       } else {
         addMatchesFromGlobal(
@@ -537,6 +532,17 @@ export class CodeStructureDetector {
         if (docStartG) {
           addMatchesFromGlobal(text, lineStart, docStartG, "start", false);
         }
+      }
+    }
+
+    if (multiSame && multiSamePositions.length > 0) {
+      multiSamePositions.sort((a, b) => a.offset - b.offset);
+      for (let k = 0; k < multiSamePositions.length; k++) {
+        const { offset, len } = multiSamePositions[k];
+        events.push({
+          offset: k % 2 === 0 ? offset : offset + len,
+          type: k % 2 === 0 ? "start" : "end",
+        });
       }
     }
 

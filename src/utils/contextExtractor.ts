@@ -9,6 +9,11 @@ export interface ExtractResult {
   context: string;
 }
 
+/** Max lines to scan backward when finding block start; avoids lag on very large files. */
+const MAX_BLOCK_SCAN_LINES = 500;
+/** Max lines to scan forward once block start is found; allows full block return for large functions/classes while guarding against runaway scans. */
+const MAX_FORWARD_SCAN_LINES = 10000;
+
 /**
  * Extracts the hovered line and surrounding context for AI explanation.
  * Used by the hover provider to build the payload sent to the AI service.
@@ -143,8 +148,9 @@ export class ContextExtractor {
         ? currentIndent
         : this.getIndentationFromNeighbor(document, lineIndex, lineCount);
 
+    const minLine = Math.max(0, lineIndex - MAX_BLOCK_SCAN_LINES);
     let blockStart: number | null = null;
-    for (let i = lineIndex; i >= 0; i--) {
+    for (let i = lineIndex; i >= minLine; i--) {
       const line = document.lineAt(i).text;
       if (line.trim().length === 0) continue;
       const indent = this.getIndentation(line);
@@ -163,8 +169,12 @@ export class ContextExtractor {
     const startLineText = document.lineAt(blockStart).text;
     const blockStartIndent = this.getIndentation(startLineText);
 
+    const maxLine = Math.min(
+      lineCount - 1,
+      blockStart + MAX_FORWARD_SCAN_LINES
+    );
     let blockEnd = blockStart;
-    for (let i = blockStart + 1; i < lineCount; i++) {
+    for (let i = blockStart + 1; i <= maxLine; i++) {
       const line = document.lineAt(i).text;
       if (line.trim().length === 0) {
         blockEnd = i;
@@ -216,8 +226,9 @@ export class ContextExtractor {
     const currentLine = document.lineAt(lineIndex).text;
     const currentIndent = this.getIndentation(currentLine);
 
+    const minLine = Math.max(0, lineIndex - MAX_BLOCK_SCAN_LINES);
     let blockStart = 0;
-    for (let i = lineIndex - 1; i >= 0; i--) {
+    for (let i = lineIndex - 1; i >= minLine; i--) {
       const line = document.lineAt(i).text;
       if (line.trim().length === 0) continue;
       const indent = this.getIndentation(line);
@@ -227,8 +238,9 @@ export class ContextExtractor {
       }
     }
 
+    const maxLine = Math.min(lineCount - 1, lineIndex + MAX_FORWARD_SCAN_LINES);
     let blockEnd = lineIndex;
-    for (let i = lineIndex + 1; i < lineCount; i++) {
+    for (let i = lineIndex + 1; i <= maxLine; i++) {
       const line = document.lineAt(i).text;
       if (line.trim().length === 0) {
         blockEnd = i;
