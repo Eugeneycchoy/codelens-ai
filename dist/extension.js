@@ -16229,14 +16229,23 @@ var { AnthropicError: AnthropicError2, APIError: APIError3, APIConnectionError: 
 var sdk_default = Anthropic;
 
 // src/services/aiService.ts
-function cancellationTokenToAbortSignal(token) {
-  if (!token)
-    return void 0;
-  if (token.isCancellationRequested)
-    return AbortSignal.abort();
+var AI_REQUEST_TIMEOUT_MS = 3e4;
+function createAbortSignalWithTimeout(token) {
   const controller = new AbortController();
-  token.onCancellationRequested(() => controller.abort());
-  return controller.signal;
+  const timeoutId = setTimeout(() => controller.abort(), AI_REQUEST_TIMEOUT_MS);
+  const cleanup = () => clearTimeout(timeoutId);
+  if (token) {
+    if (token.isCancellationRequested) {
+      cleanup();
+      return { signal: AbortSignal.abort(), cleanup: () => {
+      } };
+    }
+    token.onCancellationRequested(() => {
+      cleanup();
+      controller.abort();
+    });
+  }
+  return { signal: controller.signal, cleanup };
 }
 var AIService = class {
   getConfig() {
@@ -16251,7 +16260,8 @@ var AIService = class {
   }
   /**
    * Request an explanation for the given code. Routes to the configured provider.
-   * Returns a user-friendly error message on failure instead of throwing.
+   * Throws an Error with a user-friendly message on failure (network, timeout, auth, rate-limit, etc.)
+   * so callers can show a Retry option. Returns only on success or user cancellation.
    * Optional cancellationToken aborts the request when cancelled (e.g. hover dismissed).
    * Use explainOptions.detailLevel "detailed" and fileStructure for richer "Learn More" explanations.
    */
@@ -16259,40 +16269,50 @@ var AIService = class {
     const cfg = this.getConfig();
     if ((cfg.provider === "openai" || cfg.provider === "anthropic") && !cfg.apiKey) {
       const apiKeyHint = cfg.apiBase ? "Please set `codelensAI.apiKey` and verify `codelensAI.apiBase` in settings for the selected provider." : "Please set `codelensAI.apiKey` in settings for the selected provider.";
-      return apiKeyHint;
+      throw new Error(apiKeyHint);
     }
     const prompt = this.buildPrompt(code, lang, context, explainOptions);
-    const signal = cancellationTokenToAbortSignal(cancellationToken);
+    const { signal, cleanup } = createAbortSignalWithTimeout(cancellationToken);
     try {
+      let result;
       switch (cfg.provider) {
         case "openai":
-          return await this.callOpenAI(prompt, cfg.model, cfg.apiKey, signal);
+          result = await this.callOpenAI(prompt, cfg.model, cfg.apiKey, signal);
+          break;
         case "anthropic":
-          return await this.callAnthropic(
+          result = await this.callAnthropic(
             prompt,
             cfg.model,
             cfg.apiKey,
             cfg.apiBase,
             signal
           );
+          break;
         case "ollama":
-          return await this.callOllama(
+          result = await this.callOllama(
             prompt,
             cfg.model,
             cfg.ollamaEndpoint,
             signal
           );
+          break;
         default:
-          return `Unknown provider: ${cfg.provider}. Use openai, anthropic, or ollama.`;
+          cleanup();
+          throw new Error(
+            `Unknown provider: ${cfg.provider}. Use openai, anthropic, or ollama.`
+          );
       }
+      cleanup();
+      return result;
     } catch (err) {
+      cleanup();
       if (this.isAbortError(err)) {
         return "Request was cancelled.";
       }
       const hasApiBase = cfg.provider === "anthropic" && Boolean(cfg.apiBase?.trim());
       const message = this.analyzeError(err, hasApiBase);
       console.error("[CodeLens AI]", err);
-      return message;
+      throw new Error(message);
     }
   }
   isAbortError(error) {
@@ -16414,7 +16434,7 @@ ${code}
     );
     const content = completion.choices[0]?.message?.content;
     if (content == null || content === "") {
-      return "No explanation was returned from the provider.";
+      throw new Error("No explanation was returned from the provider.");
     }
     return content.trim();
   }
@@ -16436,7 +16456,7 @@ ${code}
         return block.text.trim();
       }
     }
-    return "No explanation was returned from the provider.";
+    throw new Error("No explanation was returned from the provider.");
   }
   async callOllama(prompt, model, endpoint, signal) {
     const base = endpoint.replace(/\/$/, "");
@@ -16454,7 +16474,7 @@ ${code}
     const data = await res.json();
     const response = data.response;
     if (response == null || response === "") {
-      return "No explanation was returned from Ollama.";
+      throw new Error("No explanation was returned from the provider.");
     }
     return response.trim();
   }
@@ -16465,6 +16485,8 @@ var CacheService = class {
   cache = /* @__PURE__ */ new Map();
   ttlMs = 30 * 60 * 1e3;
   // 30 minutes
+  hits = 0;
+  misses = 0;
   /**
    * Simple non-cryptographic hash for cache keys.
    * Fast and deterministic so the same code always maps to the same key.
@@ -16481,12 +16503,16 @@ var CacheService = class {
   get(code) {
     const key = this.generateKey(code);
     const entry = this.cache.get(key);
-    if (!entry)
-      return null;
-    if (Date.now() - entry.timestamp > this.ttlMs) {
-      this.cache.delete(key);
+    if (!entry) {
+      this.misses++;
       return null;
     }
+    if (Date.now() - entry.timestamp > this.ttlMs) {
+      this.cache.delete(key);
+      this.misses++;
+      return null;
+    }
+    this.hits++;
     return entry.explanation;
   }
   set(code, explanation) {
@@ -16506,6 +16532,19 @@ var CacheService = class {
   }
   clear() {
     this.cache.clear();
+    this.hits = 0;
+    this.misses = 0;
+  }
+  /**
+   * Returns hit/miss counts and hit rate (0–1). Use for monitoring; target >0.5 after initial use.
+   */
+  getStats() {
+    const total = this.hits + this.misses;
+    return {
+      hits: this.hits,
+      misses: this.misses,
+      hitRate: total === 0 ? 0 : this.hits / total
+    };
   }
 };
 
@@ -16648,6 +16687,7 @@ function buildPythonClassificationPatterns() {
       /^\s*except\s+/,
       /^\s*except\s*:/,
       /^\s*finally\s*:/,
+      /^\s*with\s+/,
       /^\s+def\s+\w+\s*\(/
     ],
     simple: [
@@ -16814,6 +16854,7 @@ var CodeStructureDetector = class {
     const multiStartG = patterns.comments.multiLineGlobal?.start ?? new RegExp(patterns.comments.multiLine.start.source, "g");
     const multiEndG = patterns.comments.multiLineGlobal?.end ?? new RegExp(patterns.comments.multiLine.end.source, "g");
     const docStartG = patterns.comments.doc ? patterns.comments.docStartGlobal ?? new RegExp(patterns.comments.doc.start.source, "g") : null;
+    const multiSamePositions = [];
     const addMatchesFromGlobal = (lineText2, lineStartOffset, g2, type, endOffsetPlusLength, skipStartOffsets) => {
       g2.lastIndex = 0;
       let m2;
@@ -16844,20 +16885,11 @@ var CodeStructureDetector = class {
       }
       if (multiSame) {
         multiStartG.lastIndex = 0;
-        const positions = [];
         let m2;
         while ((m2 = multiStartG.exec(text)) !== null) {
           const offset = lineStart + m2.index;
           if (offset <= positionOffset)
-            positions.push({ offset, len: m2[0].length });
-        }
-        positions.sort((a2, b2) => a2.offset - b2.offset);
-        for (let k2 = 0; k2 < positions.length; k2++) {
-          const { offset, len } = positions[k2];
-          events.push({
-            offset: k2 % 2 === 0 ? offset : offset + len,
-            type: k2 % 2 === 0 ? "start" : "end"
-          });
+            multiSamePositions.push({ offset, len: m2[0].length });
         }
       } else {
         addMatchesFromGlobal(
@@ -16872,6 +16904,16 @@ var CodeStructureDetector = class {
         if (docStartG) {
           addMatchesFromGlobal(text, lineStart, docStartG, "start", false);
         }
+      }
+    }
+    if (multiSame && multiSamePositions.length > 0) {
+      multiSamePositions.sort((a2, b2) => a2.offset - b2.offset);
+      for (let k2 = 0; k2 < multiSamePositions.length; k2++) {
+        const { offset, len } = multiSamePositions[k2];
+        events.push({
+          offset: k2 % 2 === 0 ? offset : offset + len,
+          type: k2 % 2 === 0 ? "start" : "end"
+        });
       }
     }
     events.sort((a2, b2) => a2.offset - b2.offset);
@@ -16925,6 +16967,8 @@ var CodeStructureDetector = class {
 
 // src/utils/contextExtractor.ts
 var vscode2 = __toESM(require("vscode"));
+var MAX_BLOCK_SCAN_LINES = 500;
+var MAX_FORWARD_SCAN_LINES = 1e4;
 var ContextExtractor = class {
   structureDetector = new CodeStructureDetector();
   /**
@@ -17022,8 +17066,9 @@ var ContextExtractor = class {
     const currentLineText = document.lineAt(lineIndex).text;
     const currentIndent = this.getIndentation(currentLineText);
     const effectiveIndent = currentLineText.trim().length > 0 ? currentIndent : this.getIndentationFromNeighbor(document, lineIndex, lineCount);
+    const minLine = Math.max(0, lineIndex - MAX_BLOCK_SCAN_LINES);
     let blockStart = null;
-    for (let i2 = lineIndex; i2 >= 0; i2--) {
+    for (let i2 = lineIndex; i2 >= minLine; i2--) {
       const line = document.lineAt(i2).text;
       if (line.trim().length === 0)
         continue;
@@ -17041,8 +17086,12 @@ var ContextExtractor = class {
     }
     const startLineText = document.lineAt(blockStart).text;
     const blockStartIndent = this.getIndentation(startLineText);
+    const maxLine = Math.min(
+      lineCount - 1,
+      blockStart + MAX_FORWARD_SCAN_LINES
+    );
     let blockEnd = blockStart;
-    for (let i2 = blockStart + 1; i2 < lineCount; i2++) {
+    for (let i2 = blockStart + 1; i2 <= maxLine; i2++) {
       const line = document.lineAt(i2).text;
       if (line.trim().length === 0) {
         blockEnd = i2;
@@ -17081,8 +17130,9 @@ var ContextExtractor = class {
     const lineCount = document.lineCount;
     const currentLine = document.lineAt(lineIndex).text;
     const currentIndent = this.getIndentation(currentLine);
+    const minLine = Math.max(0, lineIndex - MAX_BLOCK_SCAN_LINES);
     let blockStart = 0;
-    for (let i2 = lineIndex - 1; i2 >= 0; i2--) {
+    for (let i2 = lineIndex - 1; i2 >= minLine; i2--) {
       const line = document.lineAt(i2).text;
       if (line.trim().length === 0)
         continue;
@@ -17092,8 +17142,9 @@ var ContextExtractor = class {
         break;
       }
     }
+    const maxLine = Math.min(lineCount - 1, lineIndex + MAX_FORWARD_SCAN_LINES);
     let blockEnd = lineIndex;
-    for (let i2 = lineIndex + 1; i2 < lineCount; i2++) {
+    for (let i2 = lineIndex + 1; i2 <= maxLine; i2++) {
       const line = document.lineAt(i2).text;
       if (line.trim().length === 0) {
         blockEnd = i2;
@@ -17305,7 +17356,9 @@ var CodeLensHoverProvider = class {
   }
   /**
    * Fetches explanation from AI in the background and caches on success.
-   * Uses the given cancellation token (from hover or new-hover supersede). Does not cache when cancelled.
+   * When AIService throws (network/timeout/auth/rate-limit, etc.), caches the error with
+   * CACHED_ERROR_PREFIX so the hover shows the Retry link. Uses the given cancellation
+   * token (from hover or new-hover supersede). Does not cache when cancelled.
    */
   async fetchExplanation(document, _position, code, context, token) {
     try {
