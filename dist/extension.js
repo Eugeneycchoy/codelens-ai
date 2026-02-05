@@ -17388,7 +17388,7 @@ var CodeLensHoverProvider = class {
   createHoverContent(explanation, code, context) {
     const md = new vscode3.MarkdownString(void 0, true);
     md.isTrusted = true;
-    md.appendMarkdown("### \u{1F9E0} CodeLens AI\n\n");
+    md.appendMarkdown("### \u{1F9E0} Dumbify\n\n");
     md.appendMarkdown(explanation);
     md.appendMarkdown("\n\n---\n\n");
     const args = encodeURIComponent(JSON.stringify([code, context]));
@@ -17540,7 +17540,7 @@ var CodeLensHoverProvider = class {
       explanation = await vscode3.window.withProgress(
         {
           location: vscode3.ProgressLocation.Notification,
-          title: "CodeLens AI",
+          title: "Dumbify",
           cancellable: false
         },
         async () => this.aiService.explain(
@@ -17556,13 +17556,13 @@ var CodeLensHoverProvider = class {
       );
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      vscode3.window.showErrorMessage(`CodeLens AI: ${message}`);
+      vscode3.window.showErrorMessage(`Dumbify: ${message}`);
       return;
     }
     this.showExplanationPanel(explanation);
   }
   showExplanationPanel(explanation) {
-    const title = "CodeLens AI: Explanation";
+    const title = "Dumbify: Explanation";
     const panel = vscode3.window.createWebviewPanel(
       "codelensAiExplain",
       title,
@@ -17608,7 +17608,7 @@ function getExplanationHtml(body) {
   </style>
 </head>
 <body>
-  <h2>\u{1F9E0} CodeLens AI</h2>
+  <h2>\u{1F9E0} Dumbify</h2>
   <div>${body}</div>
 </body>
 </html>`;
@@ -17716,7 +17716,7 @@ var MenuManager = class {
     this.context = context;
     this.configWatcherDisposable = vscode5.workspace.onDidChangeConfiguration(
       (e2) => {
-        if (e2.affectsConfiguration("codelensAI") && this.quickPick?.visible) {
+        if (e2.affectsConfiguration("codelensAI") && this.quickPick && this.quickPick.visible) {
           this.quickPick.items = this.buildItems();
         }
       }
@@ -17755,7 +17755,7 @@ var MenuManager = class {
    */
   buildItems() {
     const enabled = this.stateManager.getEnabled();
-    const toggleLabel = enabled ? "$(check) CodeLens AI enabled" : "CodeLens AI disabled";
+    const toggleLabel = enabled ? "$(check) Dumbify enabled" : "Dumbify disabled";
     const toggleDescription = enabled ? "Click to disable hover explanations" : "Click to enable hover explanations";
     return [
       {
@@ -17919,7 +17919,7 @@ var MenuManager = class {
   showMainMenu() {
     if (!this.quickPick) {
       this.quickPick = vscode5.window.createQuickPick();
-      this.quickPick.title = "CodeLens AI";
+      this.quickPick.title = "Dumbify";
       this.quickPick.placeholder = "Choose an action (multiple allowed)";
       this.quickPick.matchOnDescription = true;
       this.quickPick.canSelectMany = true;
@@ -17965,8 +17965,8 @@ var MenuManager = class {
 // src/managers/statusBarManager.ts
 var vscode6 = __toESM(require("vscode"));
 var STATUS_BAR_PRIORITY = 100;
-var TOOLTIP_ENABLED = "CodeLens AI - Click to configure";
-var TOOLTIP_DISABLED = "CodeLens AI (disabled) - Click to enable";
+var TOOLTIP_ENABLED = "Dumbify - Click to configure";
+var TOOLTIP_DISABLED = "Dumbify (disabled) - Click to enable";
 var StatusBarManager = class {
   constructor(stateManager2, menuManager2) {
     this.stateManager = stateManager2;
@@ -18260,7 +18260,7 @@ var ExplanationDocumentProvider = class {
    * Uses the target language for syntax highlighting in code blocks.
    */
   formatExplanation(data) {
-    const header = `// \u{1F9E0} CodeLens AI Explanation
+    const header = `// \u{1F9E0} Dumbify Explanation
 // Generated: ${new Date(data.timestamp).toLocaleString()}
 // \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
 
@@ -18328,7 +18328,7 @@ var PeekExplanationProvider = class {
       explanation = await vscode8.window.withProgress(
         {
           location: vscode8.ProgressLocation.Notification,
-          title: "CodeLens AI: Generating explanation...",
+          title: "Dumbify: Generating explanation...",
           cancellable: true
         },
         async (_progress, token) => {
@@ -18398,7 +18398,7 @@ var QuickPeekProvider = class {
     let explanation = this.cacheService.get(code);
     if (!explanation) {
       const loadingPick = vscode8.window.createQuickPick();
-      loadingPick.title = "\u{1F9E0} CodeLens AI";
+      loadingPick.title = "\u{1F9E0} Dumbify";
       loadingPick.placeholder = "Generating explanation...";
       loadingPick.busy = true;
       loadingPick.show();
@@ -18432,7 +18432,7 @@ var QuickPeekProvider = class {
       }
     ];
     const selection = await vscode8.window.showQuickPick(items, {
-      title: "\u{1F9E0} CodeLens AI Quick Peek",
+      title: "\u{1F9E0} Dumbify Quick Peek",
       placeHolder: explanation
     });
     if (selection?.label.includes("Copy")) {
@@ -18746,7 +18746,7 @@ var SidePanelProvider = class {
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline';">
-  <title>CodeLens AI</title>
+  <title>Dumbify</title>
   <style>
     * {
       box-sizing: border-box;
@@ -18943,7 +18943,7 @@ var SidePanelProvider = class {
 </head>
 <body>
   <div class="header">
-    <h1>\u{1F9E0} CodeLens AI</h1>
+    <h1>\u{1F9E0} Dumbify</h1>
     <button class="btn btn-primary" onclick="explainSelection()">Explain Selection</button>
   </div>
   
@@ -19101,7 +19101,7 @@ var FloatingPanelProvider = class {
     } else {
       this.panel = vscode9.window.createWebviewPanel(
         "codelens-ai.floatingPanel",
-        "\u{1F9E0} CodeLens AI",
+        "\u{1F9E0} Dumbify",
         vscode9.ViewColumn.Beside,
         {
           enableScripts: true,
@@ -19184,7 +19184,7 @@ var FloatingPanelProvider = class {
   </style>
 </head>
 <body>
-  <h2>\u{1F9E0} CodeLens AI</h2>
+  <h2>\u{1F9E0} Dumbify</h2>
   <div class="loading">
     <div class="spinner"></div>
     <span>Generating explanation...</span>
@@ -19252,7 +19252,7 @@ var FloatingPanelProvider = class {
   </style>
 </head>
 <body>
-  <h2>\u{1F9E0} CodeLens AI</h2>
+  <h2>\u{1F9E0} Dumbify</h2>
   
   <div class="explanation">${this.escapeHtml(explanation)}</div>
   
@@ -19478,16 +19478,13 @@ var PrototypeManager = class {
       }
     ];
     const selection = await vscode10.window.showQuickPick(items, {
-      title: "\u{1F9E0} CodeLens AI - Select UI Mode",
+      title: "\u{1F9E0} Dumbify - Select UI Mode",
       placeHolder: `Current mode: ${this.currentMode}`
     });
     if (selection) {
       await this.setMode(selection.mode);
       vscode10.window.showInformationMessage(
-        `CodeLens AI mode set to: ${selection.label.replace(
-          /\$\([^)]+\)\s*/,
-          ""
-        )}`
+        `Dumbify mode set to: ${selection.label.replace(/\$\([^)]+\)\s*/, "")}`
       );
     }
   }
@@ -19566,10 +19563,10 @@ var PrototypeManager = class {
     if (this.codeLensRegistration) {
       this.codeLensRegistration.dispose();
       this.codeLensRegistration = null;
-      vscode10.window.showInformationMessage("CodeLens explanations disabled");
+      vscode10.window.showInformationMessage("Dumbify explanations disabled");
     } else {
       this.enableCodeLensMode();
-      vscode10.window.showInformationMessage("CodeLens explanations enabled");
+      vscode10.window.showInformationMessage("Dumbify explanations enabled");
     }
   }
   /**
@@ -19584,7 +19581,7 @@ var PrototypeManager = class {
    */
   updateStatusBar(icon, tooltip) {
     this.statusBarItem.text = `${icon} AI Mode`;
-    this.statusBarItem.tooltip = `CodeLens AI: ${tooltip}
+    this.statusBarItem.tooltip = `Dumbify: ${tooltip}
 Click to change mode`;
     this.statusBarItem.show();
   }
@@ -20086,7 +20083,7 @@ function activate(context) {
   const welcomeSubscription = vscode13.workspace.onDidOpenTextDocument(() => {
     if (sm.hasShownWelcome())
       return;
-    const message = "\u{1F44B} Welcome to CodeLens AI! Click the icon in the status bar to configure your AI provider and get started.";
+    const message = "\u{1F44B} Welcome to Dumbify! Click the icon in the status bar to configure your AI provider and get started.";
     void vscode13.window.showInformationMessage(message, "Configure Now").then((selection) => {
       void sm.markWelcomeShown();
       if (selection === "Configure Now") {
