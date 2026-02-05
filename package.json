@@ -1,8 +1,8 @@
 {
-  "name": "codelens-ai-inline",
-  "displayName": "CodeLens AI",
+  "name": "dumbify",
+  "displayName": "Dumbify",
   "version": "0.1.0",
-  "description": "AI-powered code explanations via CodeLens and Side Panel. Click inline \"Explain\" links above code to open detailed explanations in the Side Panel; hover is also available for quick previews.",
+  "description": "Dumb down confusing code with AI-powered explanations. Click, read, understand—no more head-scratching over cryptic functions.",
   "publisher": "c29ce4d7-9ced-651f-8c88-edff7e3d057a",
   "license": "MIT",
   "repository": {
@@ -51,91 +51,91 @@
     "commands": [
       {
         "command": "codelens-ai.explainCode",
-        "title": "CodeLens AI: Explain Selected Code"
+        "title": "Dumbify: Explain Selected Code"
       },
       {
         "command": "codelens-ai.retryHoverExplanation",
-        "title": "CodeLens AI: Retry Hover Explanation"
+        "title": "Dumbify: Retry Hover Explanation"
       },
       {
         "command": "codelens-ai.statusBarClick",
-        "title": "CodeLens AI: Show Menu"
+        "title": "Dumbify: Show Menu"
       },
       {
         "command": "codelens-ai.prototype.selectMode",
-        "title": "CodeLens AI: Select UI Mode"
+        "title": "Dumbify: Select UI Mode"
       },
       {
         "command": "codelens-ai.quickPeek",
-        "title": "CodeLens AI: Quick Peek Explanation"
+        "title": "Dumbify: Quick Peek Explanation"
       },
       {
         "command": "codelens-ai.inlinePeek",
-        "title": "CodeLens AI: Inline Peek Explanation"
+        "title": "Dumbify: Inline Peek Explanation"
       },
       {
         "command": "codelens-ai.explainInPanel",
-        "title": "CodeLens AI: Explain in Side Panel"
+        "title": "Dumbify: Explain in Side Panel"
       },
       {
         "command": "codelens-ai.explainFloating",
-        "title": "CodeLens AI: Explain in Floating Panel"
+        "title": "Dumbify: Explain in Floating Panel"
       },
       {
         "command": "codelens-ai.prototype.toggleCodeLens",
-        "title": "CodeLens AI: Toggle CodeLens Annotations"
+        "title": "Dumbify: Toggle CodeLens Annotations"
       },
       {
         "command": "codelens-ai.experiment.menu",
-        "title": "CodeLens AI: Hover Experiments Menu"
+        "title": "Dumbify: Hover Experiments Menu"
       },
       {
         "command": "codelens-ai.experiment.stop",
-        "title": "CodeLens AI: Stop Hover Experiment"
+        "title": "Dumbify: Stop Hover Experiment"
       },
       {
         "command": "codelens-ai.experiment.status",
-        "title": "CodeLens AI: Show Experiment Status"
+        "title": "Dumbify: Show Experiment Status"
       },
       {
         "command": "codelens-ai.experiment.run.null-returning",
-        "title": "CodeLens AI: Run Experiment - Null Returning"
+        "title": "Dumbify: Run Experiment - Null Returning"
       },
       {
         "command": "codelens-ai.experiment.run.always-return",
-        "title": "CodeLens AI: Run Experiment - Always Return Hover"
+        "title": "Dumbify: Run Experiment - Always Return Hover"
       },
       {
         "command": "codelens-ai.experiment.run.conditional",
-        "title": "CodeLens AI: Run Experiment - Conditional Hover"
+        "title": "Dumbify: Run Experiment - Conditional Hover"
       },
       {
         "command": "codelens-ai.experiment.run.multi-provider",
-        "title": "CodeLens AI: Run Experiment - Multi Provider"
+        "title": "Dumbify: Run Experiment - Multi Provider"
       },
       {
         "command": "codelens-ai.experiment.run.registration-order-high-first",
-        "title": "CodeLens AI: Run Experiment - Registration Order (High First)"
+        "title": "Dumbify: Run Experiment - Registration Order (High First)"
       },
       {
         "command": "codelens-ai.experiment.run.registration-order-high-last",
-        "title": "CodeLens AI: Run Experiment - Registration Order (High Last)"
+        "title": "Dumbify: Run Experiment - Registration Order (High Last)"
       },
       {
         "command": "codelens-ai.experiment.run.registration-order-first-second-high",
-        "title": "CodeLens AI: Run Experiment - Registration Order (Mixed)"
+        "title": "Dumbify: Run Experiment - Registration Order (Mixed)"
       },
       {
         "command": "codelens-ai.experiment.run.async",
-        "title": "CodeLens AI: Run Experiment - Async Provider"
+        "title": "Dumbify: Run Experiment - Async Provider"
       },
       {
         "command": "codelens-ai.experiment.run.undefined",
-        "title": "CodeLens AI: Run Experiment - Undefined Return"
+        "title": "Dumbify: Run Experiment - Undefined Return"
       },
       {
         "command": "codelens-ai.experiment.run.empty-content",
-        "title": "CodeLens AI: Run Experiment - Empty Content"
+        "title": "Dumbify: Run Experiment - Empty Content"
       }
     ],
     "views": {
@@ -143,7 +143,7 @@
         {
           "type": "webview",
           "id": "codelens-ai.explanationPanel",
-          "name": "CodeLens AI",
+          "name": "Dumbify",
           "when": "codelensAI.prototype.sidePanelEnabled"
         }
       ]
@@ -163,7 +163,7 @@
       }
     ],
     "configuration": {
-      "title": "CodeLens AI",
+      "title": "Dumbify",
       "properties": {
         "codelensAI.provider": {
           "type": "string",
@@ -233,7 +233,7 @@
         "codelensAI.prototype.sidePanelEnabled": {
           "type": "boolean",
           "default": true,
-          "description": "Show the CodeLens AI panel in the Explorer sidebar."
+          "description": "Show the Dumbify panel in the Explorer sidebar."
         },
         "codelensAI.prototype.enablePrototypes": {
           "type": "boolean",

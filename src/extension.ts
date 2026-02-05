@@ -97,7 +97,7 @@ export function activate(context: vscode.ExtensionContext): void {
   const welcomeSubscription = vscode.workspace.onDidOpenTextDocument(() => {
     if (sm.hasShownWelcome()) return;
     const message =
-      "👋 Welcome to CodeLens AI! Click the icon in the status bar to configure your AI provider and get started.";
+      "👋 Welcome to Dumbify! Click the icon in the status bar to configure your AI provider and get started.";
     void vscode.window
       .showInformationMessage(message, "Configure Now")
       .then((selection) => {
