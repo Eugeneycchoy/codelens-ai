@@ -27,6 +27,17 @@ jobs:
       - name: Build
         run: npm run build
 
+      - name: Check package assets
+        run: |
+          missing=""
+          [ ! -f LICENSE ] && missing="$missing LICENSE"
+          [ ! -f icon.png ] && missing="$missing icon.png"
+          if [ -n "$missing" ]; then
+            echo "::error::Required files not found:$missing"
+            echo "Create your tag from a commit that includes these files (e.g. current master)."
+            exit 1
+          fi
+
       - name: Package
         run: npx vsce package
         env:
@@ -35,6 +46,6 @@ jobs:
       - name: Publish to Marketplace
         run: |
           VERSION="${GITHUB_REF#refs/tags/v}"
-          npx vsce publish --packagePath "codelens-ai-${VERSION}.vsix"
+          npx vsce publish --packagePath "codelens-ai-inline-${VERSION}.vsix"
         env:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}

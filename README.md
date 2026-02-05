@@ -1,7 +1,7 @@
 # CodeLens AI
 
 [![VS Code](https://img.shields.io/badge/VS%20Code-1.85+-blue.svg)](https://code.visualstudio.com/)
-[![Marketplace](https://img.shields.io/vscode-marketplace/v/c29ce4d7-9ced-651f-8c88-edff7e3d057a.codelens-ai.svg)](https://marketplace.visualstudio.com/items?itemName=c29ce4d7-9ced-651f-8c88-edff7e3d057a.codelens-ai)
+[![Marketplace](https://img.shields.io/vscode-marketplace/v/c29ce4d7-9ced-651f-8c88-edff7e3d057a.codelens-ai-inline.svg)](https://marketplace.visualstudio.com/items?itemName=c29ce4d7-9ced-651f-8c88-edff7e3d057a.codelens-ai-inline)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 AI-powered code explanations inline with your code. Clickable CodeLens annotations appear above functions and code blocks; hover for quick tooltips or open the Side Panel for detailed explanations with history.
@@ -52,7 +52,7 @@ You can switch providers and models in VS Code settings.
 2. Open the **Extensions** view (`Ctrl+Shift+X` / `Cmd+Shift+X`).
 3. Search for **CodeLens AI** and click **Install**.
 
-**Or** install directly from the [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=c29ce4d7-9ced-651f-8c88-edff7e3d057a.codelens-ai).
+**Or** install directly from the [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=c29ce4d7-9ced-651f-8c88-edff7e3d057a.codelens-ai-inline).
 
 ---
 

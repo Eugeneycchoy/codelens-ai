@@ -1,5 +1,5 @@
 {
-  "name": "codelens-ai",
+  "name": "codelens-ai-inline",
   "displayName": "CodeLens AI",
   "version": "0.1.0",
   "description": "AI-powered code explanations via CodeLens and Side Panel. Click inline \"Explain\" links above code to open detailed explanations in the Side Panel; hover is also available for quick previews.",
