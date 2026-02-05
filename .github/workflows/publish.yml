@@ -46,6 +46,6 @@ jobs:
       - name: Publish to Marketplace
         run: |
           VERSION="${GITHUB_REF#refs/tags/v}"
-          npx vsce publish --packagePath "codelens-ai-inline-${VERSION}.vsix"
+          npx vsce publish --packagePath "dumbify-${VERSION}.vsix"
         env:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}
