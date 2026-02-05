@@ -31,7 +31,7 @@ const {
     getConfiguration: vi.fn(() => ({ get: vi.fn(() => "") })),
     onDidChangeConfiguration: vi.fn(() => ({ dispose: vi.fn() })),
   },
-  cacheGet: vi.fn(() => "Cached explanation"),
+  cacheGet: vi.fn((): string | null => "Cached explanation"),
   cacheSet: vi.fn(),
   cancelCalls: [] as unknown[],
   aiExplain: vi.fn(() => Promise.resolve("")),
@@ -1089,7 +1089,7 @@ describe("CodeLensHoverProvider — 13 core flows (spec)", () => {
   it("Flow 6 — re-hover after fetch: shows cached result", async () => {
     let stored: string | null = null;
     cacheGet.mockImplementation(() => stored);
-    cacheSet.mockImplementation((_code: string, explanation: string) => {
+    cacheSet.mockImplementation((_code: string, explanation: string | null) => {
       stored = explanation;
     });
     const lines = ["const z = 3;"];
@@ -1308,10 +1308,14 @@ describe("CodeLensHoverProvider — error scenarios (caching and Retry link)", (
     const result = provider.provideHover(doc, pos(0, 0), coreFlowToken);
 
     expect(result).not.toBeNull();
-    expect(result!.content).toBeDefined();
-    const md = result!.content as { appendMarkdown: ReturnType<typeof vi.fn> };
+    expect(result!.contents).toBeDefined();
+    const md = result!.contents as unknown as {
+      appendMarkdown: ReturnType<typeof vi.fn>;
+    };
     const appendCalls = md.appendMarkdown?.mock?.calls ?? [];
-    const allAppended = appendCalls.map((c: unknown[]) => String(c[0])).join("");
+    const allAppended = appendCalls
+      .map((c: unknown[]) => String(c[0]))
+      .join("");
     expect(allAppended).toContain("Retry");
     expect(allAppended).toContain("retryHoverExplanation");
   });
@@ -1327,9 +1331,13 @@ describe("CodeLensHoverProvider — error scenarios (caching and Retry link)", (
     const result = provider.provideHover(doc, pos(0, 0), coreFlowToken);
 
     expect(result).not.toBeNull();
-    const md = result!.content as { appendMarkdown: ReturnType<typeof vi.fn> };
+    const md = result!.contents as unknown as {
+      appendMarkdown: ReturnType<typeof vi.fn>;
+    };
     const appendCalls = md.appendMarkdown?.mock?.calls ?? [];
-    const allAppended = appendCalls.map((c: unknown[]) => String(c[0])).join("");
+    const allAppended = appendCalls
+      .map((c: unknown[]) => String(c[0]))
+      .join("");
     expect(allAppended).not.toContain("retryHoverExplanation");
   });
 });

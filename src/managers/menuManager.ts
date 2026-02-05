@@ -51,14 +51,18 @@ export class MenuManager {
 
   constructor(
     private readonly stateManager: StateManager,
-    private readonly context: vscode.ExtensionContext,
+    private readonly context: vscode.ExtensionContext
   ) {
     this.configWatcherDisposable = vscode.workspace.onDidChangeConfiguration(
       (e) => {
-        if (e.affectsConfiguration("codelensAI") && this.quickPick?.visible) {
+        if (
+          e.affectsConfiguration("codelensAI") &&
+          this.quickPick &&
+          (this.quickPick as { visible?: boolean }).visible
+        ) {
           this.quickPick.items = this.buildItems();
         }
-      },
+      }
     );
     context.subscriptions.push(this.configWatcherDisposable);
   }
@@ -95,8 +99,8 @@ export class MenuManager {
   private buildItems(): ActionableQuickPickItem[] {
     const enabled = this.stateManager.getEnabled();
     const toggleLabel = enabled
-      ? "$(check) CodeLens AI enabled"
-      : "CodeLens AI disabled";
+      ? "$(check) Dumbify enabled"
+      : "Dumbify disabled";
     const toggleDescription = enabled
       ? "Click to disable hover explanations"
       : "Click to enable hover explanations";
@@ -152,7 +156,7 @@ export class MenuManager {
     } else if (action === "openSettings") {
       await vscode.commands.executeCommand(
         "workbench.action.openSettings",
-        CONFIG_NS,
+        CONFIG_NS
       );
     } else if (action === "showProviderMenu") {
       this.quickPick?.hide();
@@ -298,7 +302,7 @@ export class MenuManager {
   showMainMenu(): void {
     if (!this.quickPick) {
       this.quickPick = vscode.window.createQuickPick<ActionableQuickPickItem>();
-      this.quickPick.title = "CodeLens AI";
+      this.quickPick.title = "Dumbify";
       this.quickPick.placeholder = "Choose an action (multiple allowed)";
       this.quickPick.matchOnDescription = true;
       this.quickPick.canSelectMany = true;
