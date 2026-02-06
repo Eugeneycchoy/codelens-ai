@@ -415,6 +415,13 @@ export class CodeStructureDetector {
     const leadingSpaces = this.getLeadingWhitespaceLength(lineText);
     const prev = this.getPreviousNonBlankLineInfo(document, position.line);
     if (prev !== null && leadingSpaces > prev.indent) {
+      const prevLineText = document.lineAt(prev.lineIndex).text;
+      const prevIsStructural =
+        classification &&
+        this.matchAnyPattern(prevLineText, classification.structural);
+      if (!prevIsStructural) {
+        return "unknown";
+      }
       return "structural";
     }
     return "unknown";
