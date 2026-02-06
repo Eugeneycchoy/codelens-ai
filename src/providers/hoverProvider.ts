@@ -40,6 +40,7 @@ export class CodeLensHoverProvider
   private lastDecoratedEditor: vscode.TextEditor | null = null;
   private lastDecoratedRange: vscode.Range | null = null;
   private selectionListener: vscode.Disposable | null = null;
+  private visibleRangesListener: vscode.Disposable | null = null;
   private configListener: vscode.Disposable | null = null;
   private themeListener: vscode.Disposable | null = null;
 
@@ -61,6 +62,17 @@ export class CodeLensHoverProvider
         }
       }
     );
+    this.visibleRangesListener =
+      vscode.window.onDidChangeTextEditorVisibleRanges((e) => {
+        if (
+          !this.lastDecoratedRange ||
+          e.textEditor !== this.lastDecoratedEditor
+        )
+          return;
+        if (!this.isRangeVisibleIn(e.visibleRanges, this.lastDecoratedRange)) {
+          this.clearDecoration();
+        }
+      });
     this.configListener = vscode.workspace.onDidChangeConfiguration((e) => {
       if (e.affectsConfiguration("codelensAI.highlightColor"))
         this.updateDecorationType();
@@ -68,6 +80,32 @@ export class CodeLensHoverProvider
     this.themeListener = vscode.window.onDidChangeActiveColorTheme(() =>
       this.updateDecorationType()
     );
+  }
+
+  /** True if position is inside range (inclusive of start/end). */
+  private rangeContainsPosition(
+    range: vscode.Range,
+    position: vscode.Position
+  ): boolean {
+    if (position.line < range.start.line || position.line > range.end.line)
+      return false;
+    if (position.line === range.start.line && position.character < range.start.character)
+      return false;
+    if (position.line === range.end.line && position.character > range.end.character)
+      return false;
+    return true;
+  }
+
+  /** True if the decorated range overlaps at least one visible range (line-based). */
+  private isRangeVisibleIn(
+    visibleRanges: readonly vscode.Range[],
+    range: vscode.Range
+  ): boolean {
+    for (const v of visibleRanges) {
+      if (range.start.line <= v.end.line && range.end.line >= v.start.line)
+        return true;
+    }
+    return false;
   }
 
   private getHighlightColor(): string {
@@ -149,6 +187,14 @@ export class CodeLensHoverProvider
     _token: vscode.CancellationToken
   ): vscode.Hover | null {
     this.cancelPreviousHoverFetch();
+    if (
+      this.lastDecoratedEditor &&
+      this.lastDecoratedRange &&
+      this.lastDecoratedEditor.document === document &&
+      !this.rangeContainsPosition(this.lastDecoratedRange, position)
+    ) {
+      this.clearDecoration();
+    }
     if (this.detector.isComment(document, position)) return null;
 
     const lineText = document.lineAt(position.line).text;
@@ -500,6 +546,8 @@ export class CodeLensHoverProvider
     this.decorationType = null;
     this.selectionListener?.dispose();
     this.selectionListener = null;
+    this.visibleRangesListener?.dispose();
+    this.visibleRangesListener = null;
     this.configListener?.dispose();
     this.configListener = null;
     this.themeListener?.dispose();
