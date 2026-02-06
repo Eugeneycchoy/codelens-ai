@@ -9,10 +9,10 @@ export interface ExtractResult {
   context: string;
 }
 
-/** Max lines to scan backward when finding block start; avoids lag on very large files. */
-const MAX_BLOCK_SCAN_LINES = 500;
-/** Max lines to scan forward once block start is found; allows full block return for large functions/classes while guarding against runaway scans. */
-const MAX_FORWARD_SCAN_LINES = 10000;
+/** Max lines to scan backward when finding block start; keeps large-file hover responsive. */
+const MAX_BLOCK_SCAN_LINES = 200;
+/** Max lines to scan forward once block start is found; caps block size for performance. */
+const MAX_FORWARD_SCAN_LINES = 2000;
 
 /**
  * Extracts the hovered line and surrounding context for AI explanation.
@@ -87,7 +87,8 @@ export class ContextExtractor {
    * When classification is provided:
    * - 'structural' → full block range via language-aware detection
    * - 'simple' → single-line range
-   * - 'unknown' or omitted → indentation heuristic (backward compatible)
+   * - 'unknown' → single-line range (only the hovered line)
+   * - omitted → indentation heuristic (backward compatible)
    */
   getBlockRange(
     document: vscode.TextDocument,
@@ -101,9 +102,8 @@ export class ContextExtractor {
     const lineIndex = Math.max(0, Math.min(position.line, lineCount - 1));
     const pos = new vscode.Position(lineIndex, 0);
 
-    if (classification === "simple") {
-      const line = document.lineAt(lineIndex);
-      return new vscode.Range(lineIndex, 0, lineIndex, line.text.length);
+    if (classification === "simple" || classification === "unknown") {
+      return this.getSingleLineRange(document, pos);
     }
 
     const { start, end } =
@@ -113,6 +113,23 @@ export class ContextExtractor {
 
     const endLine = document.lineAt(end);
     return new vscode.Range(start, 0, end, endLine.text.length);
+  }
+
+  /**
+   * Returns the range for the single line at the given position (full line from start to end).
+   * Used for hover when classification is "simple" or when single-line highlighting is desired.
+   */
+  getSingleLineRange(
+    document: vscode.TextDocument,
+    position: vscode.Position
+  ): vscode.Range {
+    const lineCount = document.lineCount;
+    if (lineCount === 0) {
+      return new vscode.Range(0, 0, 0, 0);
+    }
+    const lineIndex = Math.max(0, Math.min(position.line, lineCount - 1));
+    const line = document.lineAt(lineIndex);
+    return new vscode.Range(lineIndex, 0, lineIndex, line.text.length);
   }
 
   /**
@@ -182,6 +199,10 @@ export class ContextExtractor {
       }
       const indent = this.getIndentation(line);
       if (indent <= blockStartIndent) {
+        // End block before a sibling or closing construct; exclude the next structural start from this block.
+        if (structuralPatterns.some((re) => re.test(line))) {
+          blockEnd = Math.max(blockStart, i - 1);
+        }
         break;
       }
       blockEnd = i;
