@@ -4,6 +4,12 @@ import { ContextExtractor } from "./contextExtractor";
 import { CodeStructureDetector } from "./codeStructureDetector";
 import { CodeLensHoverProvider } from "../providers/hoverProvider";
 
+/** Holder for onDidChangeTextEditorVisibleRanges callback so tests can invoke it. */
+type VisibleRangesEvent = {
+  textEditor: { document: unknown; setDecorations: ReturnType<typeof vi.fn> };
+  visibleRanges: Array<{ start: { line: number }; end: { line: number } }>;
+};
+
 /** Hoisted so vi.mock factories can reference them. Used by 13 core-flow tests. */
 const {
   mockWindow,
@@ -12,30 +18,41 @@ const {
   cacheSet,
   cancelCalls,
   aiExplain,
-} = vi.hoisted(() => ({
-  mockWindow: {
-    visibleTextEditors: [] as Array<{
-      document: unknown;
-      setDecorations: ReturnType<typeof vi.fn>;
-    }>,
-    activeTextEditor: null as {
-      document: unknown;
-      setDecorations: ReturnType<typeof vi.fn>;
-    } | null,
-    createTextEditorDecorationType: vi.fn(() => ({ dispose: vi.fn() })),
-    onDidChangeTextEditorSelection: vi.fn(() => ({ dispose: vi.fn() })),
-    onDidChangeActiveColorTheme: vi.fn(() => ({ dispose: vi.fn() })),
-    activeColorTheme: { kind: 1 },
-  },
-  mockWorkspace: {
-    getConfiguration: vi.fn(() => ({ get: vi.fn(() => "") })),
-    onDidChangeConfiguration: vi.fn(() => ({ dispose: vi.fn() })),
-  },
-  cacheGet: vi.fn((): string | null => "Cached explanation"),
-  cacheSet: vi.fn(),
-  cancelCalls: [] as unknown[],
-  aiExplain: vi.fn(() => Promise.resolve("")),
-}));
+  visibleRangesCallbackHolder,
+} = vi.hoisted(() => {
+  const visibleRangesCallbackHolder: {
+    current: ((e: VisibleRangesEvent) => void) | null;
+  } = { current: null };
+  return {
+    mockWindow: {
+      visibleTextEditors: [] as Array<{
+        document: unknown;
+        setDecorations: ReturnType<typeof vi.fn>;
+      }>,
+      activeTextEditor: null as {
+        document: unknown;
+        setDecorations: ReturnType<typeof vi.fn>;
+      } | null,
+      createTextEditorDecorationType: vi.fn(() => ({ dispose: vi.fn() })),
+      onDidChangeTextEditorSelection: vi.fn(() => ({ dispose: vi.fn() })),
+      onDidChangeTextEditorVisibleRanges: vi.fn((cb: (e: VisibleRangesEvent) => void) => {
+        visibleRangesCallbackHolder.current = cb;
+        return { dispose: vi.fn() };
+      }),
+      onDidChangeActiveColorTheme: vi.fn(() => ({ dispose: vi.fn() })),
+      activeColorTheme: { kind: 1 },
+    },
+    mockWorkspace: {
+      getConfiguration: vi.fn(() => ({ get: vi.fn(() => "") })),
+      onDidChangeConfiguration: vi.fn(() => ({ dispose: vi.fn() })),
+    },
+    cacheGet: vi.fn((): string | null => "Cached explanation"),
+    cacheSet: vi.fn(),
+    cancelCalls: [] as unknown[],
+    aiExplain: vi.fn(() => Promise.resolve("")),
+    visibleRangesCallbackHolder,
+  };
+});
 
 /**
  * Minimal vscode mock so ContextExtractor (which uses vscode.Range and vscode.Position) runs under Vitest.
@@ -81,7 +98,10 @@ vi.mock("vscode", () => {
     }
   }
   class Hover {
-    constructor(public content: unknown, public range: unknown) {}
+    constructor(
+      public contents: unknown,
+      public range: unknown
+    ) {}
   }
   const MarkdownString = vi
     .fn()
@@ -181,6 +201,17 @@ function expectRangeLines(
 function expectSingleLine(range: vscode.Range, lineIndex: number): void {
   expect(range.start.line).toBe(lineIndex);
   expect(range.end.line).toBe(lineIndex);
+}
+
+/** Assert getSingleLineRange returns exactly the given line. */
+function expectSingleLineRange(
+  range: vscode.Range,
+  lineIndex: number,
+  lineLength: number
+): void {
+  expectSingleLine(range, lineIndex);
+  expect(range.start.character).toBe(0);
+  expect(range.end.character).toBe(lineLength);
 }
 
 describe("ContextExtractor.getBlockRange", () => {
@@ -365,19 +396,23 @@ describe("ContextExtractor.getBlockRange", () => {
   });
 
   describe("classification: unknown and fallback (indentation-based)", () => {
-    it("unknown uses indentation heuristic: same-indent lines form one block", () => {
+    it("unknown returns single-line range (only the hovered line)", () => {
       const lines = ["someCall();", "otherCall();"];
       const doc = makeDocument(lines, "typescript");
-      const range = extractor.getBlockRange(doc, pos(0, 0), "unknown");
-      expectRangeLines(range, 0, 1);
+      const range0 = extractor.getBlockRange(doc, pos(0, 0), "unknown");
+      expectSingleLine(range0, 0);
+      expect(range0.end.character).toBe(lines[0].length);
+      const range1 = extractor.getBlockRange(doc, pos(1, 0), "unknown");
+      expectSingleLine(range1, 1);
+      expect(range1.end.character).toBe(lines[1].length);
     });
 
-    it("unknown: indented block treated as one block", () => {
+    it("unknown: single-line range for line inside indented block", () => {
       const lines = ["function f() {", "  const a = 1;", "  const b = 2;", "}"];
       const doc = makeDocument(lines, "typescript");
       const range = extractor.getBlockRange(doc, pos(1, 2), "unknown");
-      expect(range.start.line).toBe(1);
-      expect(range.end.line).toBe(2);
+      expectSingleLine(range, 1);
+      expect(range.end.character).toBe(lines[1].length);
     });
 
     it("omitted classification falls back to indentation (backward compatible)", () => {
@@ -430,6 +465,87 @@ describe("ContextExtractor.getBlockRange", () => {
         "structural"
       );
       expectRangeLines(rangeOnBlank, 0, 3);
+    });
+  });
+
+  describe("getSingleLineRange (hover-specific single-line)", () => {
+    it("returns single-line range for the line at position", () => {
+      const lines = ["const x = 1;", "const y = 2;"];
+      const doc = makeDocument(lines, "typescript");
+      const range = extractor.getSingleLineRange(doc, pos(0, 5));
+      expectSingleLineRange(range, 0, lines[0].length);
+    });
+
+    it("returns single-line range for last line", () => {
+      const lines = ["a", "b", "c"];
+      const doc = makeDocument(lines, "typescript");
+      const range = extractor.getSingleLineRange(doc, pos(2, 0));
+      expectSingleLineRange(range, 2, 1);
+    });
+
+    it("clamps position past last line to last line", () => {
+      const lines = ["only"];
+      const doc = makeDocument(lines, "typescript");
+      const range = extractor.getSingleLineRange(doc, pos(10, 0));
+      expectSingleLineRange(range, 0, lines[0].length);
+    });
+
+    it("empty document returns zero-length range at (0,0)", () => {
+      const doc = makeDocument([], "typescript");
+      const range = extractor.getSingleLineRange(doc, pos(0, 0));
+      expect(range.start.line).toBe(0);
+      expect(range.start.character).toBe(0);
+      expect(range.end.line).toBe(0);
+      expect(range.end.character).toBe(0);
+    });
+  });
+
+  describe("optimized scanning (early termination and limits)", () => {
+    it("structural: forward scan stops at next structural keyword at same indent (sibling block)", () => {
+      const lines = [
+        "function first() {",
+        "  const a = 1;",
+        "  return a;",
+        "}",
+        "function second() {",
+        "  return 2;",
+        "}",
+      ];
+      const doc = makeDocument(lines, "typescript");
+      const range = extractor.getBlockRange(doc, pos(1, 2), "structural");
+      expectRangeLines(range, 0, 2);
+      expect(range.end.line).toBe(2);
+    });
+
+    it("structural: block does not include next sibling if/for at same indent", () => {
+      const lines = [
+        "if (a) {",
+        "  foo();",
+        "  bar();",
+        "}",
+        "if (b) {",
+        "  baz();",
+        "}",
+      ];
+      const doc = makeDocument(lines, "typescript");
+      const range = extractor.getBlockRange(doc, pos(1, 2), "structural");
+      expectRangeLines(range, 0, 2);
+    });
+
+    it("structural: block detection accuracy unchanged for nested blocks", () => {
+      const lines = [
+        "function outer() {",
+        "  if (x) {",
+        "    return 1;",
+        "  }",
+        "  return 0;",
+        "}",
+      ];
+      const doc = makeDocument(lines, "typescript");
+      const rangeInner = extractor.getBlockRange(doc, pos(2, 4), "structural");
+      expectRangeLines(rangeInner, 1, 2);
+      const rangeOuter = extractor.getBlockRange(doc, pos(0, 0), "structural");
+      expectRangeLines(rangeOuter, 0, 4);
     });
   });
 
@@ -723,11 +839,19 @@ describe("HoverProvider classification-based highlighting (integration)", () => 
       expect(range.end.line).toBe(0);
     });
 
-    it("body line inside if gets full if-block highlight", () => {
+    it("body line inside if gets full if-block highlight when classification is structural", () => {
       const lines = ["if (x) {", "  doSomething();", "}"];
-      const range = getHighlightRange(lines, "typescript", 1, 2);
+      const doc = makeDocument(lines, "typescript");
+      const range = extractor.getBlockRange(doc, pos(1, 2), "structural");
       expect(range.start.line).toBe(0);
       expect(range.end.line).toBe(1);
+    });
+
+    it("hovering body line in function yields full block (classify→getBlockRange pipeline)", () => {
+      const lines = ["function foo() {", "  doSomething();", "  return 1;", "}"];
+      const range = getHighlightRange(lines, "typescript", 1, 2);
+      expect(range.start.line).toBe(0);
+      expect(range.end.line).toBe(2);
     });
 
     it("import gets single-line highlight", () => {
@@ -752,6 +876,13 @@ describe("HoverProvider classification-based highlighting (integration)", () => 
       expect(range.start.line).toBe(0);
       expect(range.end.line).toBe(0);
     });
+
+    it("hovering body line in function yields full block (classify→getBlockRange pipeline)", () => {
+      const lines = ["function f() {", "  doSomething();", "  return x;", "}"];
+      const range = getHighlightRange(lines, "javascript", 1, 2);
+      expect(range.start.line).toBe(0);
+      expect(range.end.line).toBe(2);
+    });
   });
 
   describe("Python", () => {
@@ -769,8 +900,16 @@ describe("HoverProvider classification-based highlighting (integration)", () => 
       expect(range.end.line).toBe(0);
     });
 
-    it("indented body line (non-keyword) inside def gets full def highlight", () => {
+    it("indented body line (non-keyword) inside def gets full def highlight when classification is structural", () => {
       const lines = ["def f():", "    x = 1", "    return x"];
+      const doc = makeDocument(lines, "python");
+      const range = extractor.getBlockRange(doc, pos(1, 4), "structural");
+      expect(range.start.line).toBe(0);
+      expect(range.end.line).toBe(2);
+    });
+
+    it("hovering body line in def yields full block (classify→getBlockRange pipeline)", () => {
+      const lines = ["def main():", "    x = 1", "    return x"];
       const range = getHighlightRange(lines, "python", 1, 4);
       expect(range.start.line).toBe(0);
       expect(range.end.line).toBe(2);
@@ -778,10 +917,10 @@ describe("HoverProvider classification-based highlighting (integration)", () => 
   });
 
   describe("unknown classification", () => {
-    it("non-keyword line uses indentation-based range (same indent as previous = one block)", () => {
+    it("non-keyword line uses single-line range (unknown → only hovered line)", () => {
       const lines = ["function f() {}", "someCall();"];
       const range = getHighlightRange(lines, "typescript", 1, 0);
-      expect(range.start.line).toBe(0);
+      expect(range.start.line).toBe(1);
       expect(range.end.line).toBe(1);
     });
   });
@@ -943,7 +1082,7 @@ describe("CodeLensHoverProvider provideHover highlight (integration)", () => {
       expectDecorationRange(setDecorations, doc, 0, 0);
     });
 
-    it("unknown (body line inside def): decoration range is full def block", () => {
+    it("body line inside def: decoration range is full def block (structural)", () => {
       const lines = ["def f():", "    x = 1", "    return x"];
       const doc = makeDocument(lines, "python");
       const setDecorations = vi.fn();
@@ -954,6 +1093,214 @@ describe("CodeLensHoverProvider provideHover highlight (integration)", () => {
       provider.provideHover(doc, pos(1, 4), token);
 
       expectDecorationRange(setDecorations, doc, 1, 4);
+    });
+  });
+});
+
+/**
+ * Mouse-based decoration clearing: decoration clears when the user hovers
+ * outside the decorated range or when the viewport changes so the range is no longer visible.
+ */
+describe("CodeLensHoverProvider — mouse-based decoration clearing", () => {
+  const token = {
+    isCancellationRequested: false,
+    onCancellationRequested: vi.fn(),
+  };
+  let provider: CodeLensHoverProvider;
+
+  beforeEach(() => {
+    mockWindow.visibleTextEditors = [];
+    mockWindow.activeTextEditor = null;
+    cacheGet.mockReturnValue("Cached explanation");
+    provider = new CodeLensHoverProvider();
+  });
+
+  afterEach(() => {
+    provider?.dispose();
+  });
+
+  it("clears decoration when hovering outside the decorated range", () => {
+    const lines = [
+      "function foo() {",
+      "  return 1;",
+      "}",
+      "// comment",
+      "// another",
+    ];
+    const doc = makeDocument(lines, "typescript");
+    const setDecorations = vi.fn();
+    const editor = { document: doc, setDecorations };
+    mockWindow.visibleTextEditors = [editor];
+    mockWindow.activeTextEditor = editor;
+
+    provider.provideHover(doc, pos(0, 0), token);
+    const callsAfterFirst = setDecorations.mock.calls.length;
+    expect(callsAfterFirst).toBeGreaterThanOrEqual(1);
+    const lastRangeAfterFirst = setDecorations.mock.calls[callsAfterFirst - 1][1] as vscode.Range[];
+    expect(lastRangeAfterFirst).toHaveLength(1);
+    expect(lastRangeAfterFirst[0].start.line).toBe(0);
+    expect(lastRangeAfterFirst[0].end.line).toBe(1);
+
+    provider.provideHover(doc, pos(4, 0), token);
+    const clearedCall = setDecorations.mock.calls.find(
+      (call) => Array.isArray(call[1]) && (call[1] as vscode.Range[]).length === 0
+    );
+    expect(clearedCall).toBeDefined();
+  });
+
+  it("clears decoration when viewport changes and decorated range is no longer visible", () => {
+    const lines = ["function foo() {", "  return 1;", "}"];
+    const doc = makeDocument(lines, "typescript");
+    const setDecorations = vi.fn();
+    const editor = { document: doc, setDecorations };
+    mockWindow.visibleTextEditors = [editor];
+    mockWindow.activeTextEditor = editor;
+
+    provider.provideHover(doc, pos(0, 0), token);
+    expect(setDecorations).toHaveBeenCalled();
+    const applyCall = setDecorations.mock.calls.find(
+      (call) => Array.isArray(call[1]) && (call[1] as vscode.Range[]).length === 1
+    );
+    expect(applyCall).toBeDefined();
+
+    const cb = visibleRangesCallbackHolder.current;
+    expect(cb).not.toBeNull();
+    cb!({
+      textEditor: editor,
+      visibleRanges: [
+        { start: { line: 10, character: 0 }, end: { line: 20, character: 0 } },
+      ],
+    });
+    const clearCall = setDecorations.mock.calls.find(
+      (call) => Array.isArray(call[1]) && (call[1] as vscode.Range[]).length === 0
+    );
+    expect(clearCall).toBeDefined();
+  });
+});
+
+/**
+ * Integration tests for the three hover-highlighting bug fixes:
+ * 1) classification of body lines → full-block highlight when appropriate
+ * 2) decoration clearing when hover moves outside the decorated range
+ * 3) optimized block range detection → block does not include next sibling
+ */
+describe("Hover highlighting bug-fix integration", () => {
+  const detector = new CodeStructureDetector();
+  const extractor = new ContextExtractor();
+
+  describe("1. Classification of body lines", () => {
+    it("body line inside function: getBlockRange with structural returns full function block (TS)", () => {
+      const lines = ["function foo() {", "  doSomething();", "  return 1;", "}"];
+      const doc = makeDocument(lines, "typescript");
+      const bodyLinePos = pos(1, 2);
+      const range = extractor.getBlockRange(doc, bodyLinePos, "structural");
+      expect(range.start.line).toBe(0);
+      expect(range.end.line).toBe(2);
+    });
+
+    it("body line inside def: getBlockRange with structural returns full def block (Python)", () => {
+      const lines = ["def f():", "    x = 1", "    return x"];
+      const doc = makeDocument(lines, "python");
+      const range = extractor.getBlockRange(doc, pos(1, 4), "structural");
+      expect(range.start.line).toBe(0);
+      expect(range.end.line).toBe(2);
+    });
+
+    it("body line (non-keyword) and header produce same block extent when classification is structural", () => {
+      const lines = ["if (x) {", "  doSomething();", "}"];
+      const doc = makeDocument(lines, "typescript");
+      const headerRange = extractor.getBlockRange(doc, pos(0, 0), "structural");
+      const bodyRange = extractor.getBlockRange(doc, pos(1, 2), "structural");
+      expect(headerRange.start.line).toBe(bodyRange.start.line);
+      expect(headerRange.end.line).toBe(bodyRange.end.line);
+    });
+  });
+
+  describe("2. Decoration clearing on hover move", () => {
+    const token = {
+      isCancellationRequested: false,
+      onCancellationRequested: vi.fn(),
+    };
+    let provider: CodeLensHoverProvider;
+
+    beforeEach(() => {
+      mockWindow.visibleTextEditors = [];
+      mockWindow.activeTextEditor = null;
+      cacheGet.mockReturnValue("Cached explanation");
+      provider = new CodeLensHoverProvider();
+    });
+
+    afterEach(() => {
+      provider?.dispose();
+    });
+
+    it("moving hover from one block to another clears previous decoration then applies new one", () => {
+      const lines = [
+        "function first() {",
+        "  return 1;",
+        "}",
+        "function second() {",
+        "  return 2;",
+        "}",
+      ];
+      const doc = makeDocument(lines, "typescript");
+      const setDecorations = vi.fn();
+      const editor = { document: doc, setDecorations };
+      mockWindow.visibleTextEditors = [editor];
+      mockWindow.activeTextEditor = editor;
+
+      provider.provideHover(doc, pos(0, 0), token);
+      const afterFirst = setDecorations.mock.calls.length;
+      const firstRange = (setDecorations.mock.calls[afterFirst - 1][1] as vscode.Range[])[0];
+      expect(firstRange.start.line).toBe(0);
+      expect(firstRange.end.line).toBe(1);
+
+      provider.provideHover(doc, pos(4, 0), token);
+      const clearCallIndex = setDecorations.mock.calls.findIndex(
+        (call) => Array.isArray(call[1]) && (call[1] as vscode.Range[]).length === 0
+      );
+      expect(clearCallIndex).toBeGreaterThanOrEqual(0);
+      const applyCallsAfterClear = setDecorations.mock.calls
+        .slice(clearCallIndex + 1)
+        .filter((call) => Array.isArray(call[1]) && (call[1] as vscode.Range[]).length === 1);
+      expect(applyCallsAfterClear.length).toBeGreaterThanOrEqual(1);
+      const lastRange = (applyCallsAfterClear[applyCallsAfterClear.length - 1][1] as vscode.Range[])[0];
+      expect(lastRange.start.line).toBe(4);
+      expect(lastRange.end.line).toBeGreaterThanOrEqual(4);
+    });
+  });
+
+  describe("3. Optimized block range detection", () => {
+    it("block range for position inside first function does not include second function", () => {
+      const lines = [
+        "function first() {",
+        "  const a = 1;",
+        "  return a;",
+        "}",
+        "function second() {",
+        "  return 2;",
+        "}",
+      ];
+      const doc = makeDocument(lines, "typescript");
+      const range = extractor.getBlockRange(doc, pos(1, 2), "structural");
+      expect(range.start.line).toBe(0);
+      expect(range.end.line).toBe(2);
+      expect(range.end.line).toBeLessThan(4);
+    });
+
+    it("block range for position inside first if does not include sibling if", () => {
+      const lines = [
+        "if (a) {",
+        "  foo();",
+        "}",
+        "if (b) {",
+        "  bar();",
+        "}",
+      ];
+      const doc = makeDocument(lines, "typescript");
+      const range = extractor.getBlockRange(doc, pos(1, 2), "structural");
+      expect(range.start.line).toBe(0);
+      expect(range.end.line).toBe(1);
     });
   });
 });

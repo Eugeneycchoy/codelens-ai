@@ -426,7 +426,7 @@ describe("CodeStructureDetector.classify", () => {
   });
 
   describe("indentation-based fallback", () => {
-    it("classifies indented line after structural as structural", () => {
+    it("classifies indented body line after structural as structural", () => {
       const doc = makeDocument(
         ["if (x) {", "  doSomething();", "}"],
         "typescript"
@@ -434,7 +434,7 @@ describe("CodeStructureDetector.classify", () => {
       expect(detector.classify(doc, pos(1, 0))).toBe("structural");
     });
 
-    it("classifies indented line after def as structural (Python)", () => {
+    it("classifies indented body line after def as structural (Python)", () => {
       const doc = makeDocument(["def foo():", "    x = 1"], "python");
       expect(detector.classify(doc, pos(1, 0))).toBe("structural");
     });
@@ -445,6 +445,75 @@ describe("CodeStructureDetector.classify", () => {
         "typescript"
       );
       expect(detector.classify(doc, pos(1, 0))).toBe("unknown");
+    });
+  });
+
+  describe("body lines inside functions/classes", () => {
+    const lang = "typescript";
+
+    it("classifies function body statement (no keyword) as structural", () => {
+      const doc = makeDocument(
+        ["function foo() {", "  doSomething();", "}"],
+        lang
+      );
+      expect(detector.classify(doc, pos(1, 0))).toBe("structural");
+    });
+
+    it("classifies function body const/return as simple", () => {
+      const doc = makeDocument(
+        ["function foo() {", "  const a = 1;", "  return a;", "}"],
+        lang
+      );
+      expect(detector.classify(doc, pos(1, 0))).toBe("simple");
+      expect(detector.classify(doc, pos(2, 0))).toBe("simple");
+    });
+
+    it("classifies class method body statement as structural", () => {
+      const doc = makeDocument(
+        ["class A {", "  method() {", "    this.doSomething();", "  }", "}"],
+        lang
+      );
+      expect(detector.classify(doc, pos(2, 0))).toBe("structural");
+    });
+
+    it("classifies class method body return as simple", () => {
+      const doc = makeDocument(
+        ["class A {", "  get() {", "    return this.x;", "  }", "}"],
+        lang
+      );
+      expect(detector.classify(doc, pos(2, 0))).toBe("simple");
+    });
+
+    it("classifies indented line after non-structural previous line as unknown", () => {
+      const doc = makeDocument(
+        ["function f() {", "  const x = 1;", "  x + 1;", "}"],
+        lang
+      );
+      expect(detector.classify(doc, pos(2, 0))).toBe("unknown");
+    });
+  });
+
+  describe("body lines inside functions/classes (Python)", () => {
+    const lang = "python";
+
+    it("classifies def body assignment (first line after def) as structural", () => {
+      const doc = makeDocument(["def foo():", "    x = 1", "    y = 2"], lang);
+      expect(detector.classify(doc, pos(1, 0))).toBe("structural");
+      // Same indent as previous body line: no strict "> prev.indent", so unknown
+      expect(detector.classify(doc, pos(2, 0))).toBe("unknown");
+    });
+
+    it("classifies def body return as simple", () => {
+      const doc = makeDocument(["def foo():", "    return 42"], lang);
+      expect(detector.classify(doc, pos(1, 0))).toBe("simple");
+    });
+
+    it("classifies class method body as structural", () => {
+      const doc = makeDocument(
+        ["class A:", "    def run(self):", "        pass"],
+        lang
+      );
+      expect(detector.classify(doc, pos(2, 0))).toBe("structural");
     });
   });
 
@@ -927,7 +996,7 @@ describe("CodeStructureDetector integration", () => {
     expect(detector.classify(doc, pos(7, 0))).toBe("structural");
     expect(detector.classify(doc, pos(8, 0))).toBe("simple");
     expect(detector.classify(doc, pos(9, 0))).toBe("structural");
-    expect(detector.classify(doc, pos(10, 0))).toBe("simple"); // return statement
+    expect(detector.classify(doc, pos(10, 0))).toBe("simple"); // return statement (matches simple pattern)
     expect(detector.classify(doc, pos(11, 0))).toBe("unknown"); // closing brace
     expect(detector.classify(doc, pos(12, 0))).toBe("simple"); // return statement
     expect(detector.classify(doc, pos(13, 0))).toBe("unknown"); // closing brace
@@ -963,12 +1032,12 @@ describe("CodeStructureDetector integration", () => {
     expect(detector.isEmptyLineInBlock(doc, pos(4, 0))).toBe(false);
 
     expect(detector.classify(doc, pos(5, 0))).toBe("structural");
-    expect(detector.classify(doc, pos(6, 0))).toBe("structural");
+    expect(detector.classify(doc, pos(6, 0))).toBe("structural"); // def body line
     expect(detector.classify(doc, pos(7, 0))).toBe("structural");
     expect(detector.classify(doc, pos(8, 0))).toBe("simple"); // return x
     expect(["simple", "unknown"]).toContain(detector.classify(doc, pos(10, 0)));
     expect(detector.classify(doc, pos(12, 0))).toBe("structural"); // class Helper
-    expect(detector.classify(doc, pos(13, 0))).toBe("structural"); // def run
+    expect(detector.classify(doc, pos(13, 0))).toBe("structural"); // def run body (pass)
   });
 
   it("getLanguagePatterns returns same patterns as getPatterns and is cached", () => {
@@ -1061,7 +1130,7 @@ describe("CodeStructureDetector — malformed syntax and mixed indentation", () 
       expect(detector.classify(doc, pos(1, 0))).toBe("simple");
     });
 
-    it("treats space-indented line after tab-indented structural as structural", () => {
+    it("treats space-indented body line after structural as structural", () => {
       const doc = makeDocument(["if (x) {", "    foo();", "}"], lang);
       expect(detector.classify(doc, pos(1, 0))).toBe("structural");
     });
@@ -1075,9 +1144,9 @@ describe("CodeStructureDetector — malformed syntax and mixed indentation", () 
   describe("Python — mixed indentation", () => {
     const lang = "python";
 
-    it("classifies def with mixed indent in body (spaces then tabs): body line and return", () => {
+    it("classifies def with mixed indent in body (spaces then tabs): body line structural, return simple", () => {
       const doc = makeDocument(["def f():", "\tx = 1", "    return x"], lang);
-      expect(["structural", "simple"]).toContain(detector.classify(doc, pos(1, 0)));
+      expect(detector.classify(doc, pos(1, 0))).toBe("structural");
       expect(detector.classify(doc, pos(2, 0))).toBe("simple");
     });
   });
@@ -1275,9 +1344,9 @@ describe("CodeStructureDetector — unsupported languages (fallback to generic h
       expect(["structural", "unknown"]).toContain(c);
     });
 
-    it("indentation-based block for body line", () => {
+    it("indentation-based fallback: body line after def is unknown", () => {
       const doc = makeDocument(["def foo", "  x = 1", "end"], lang);
-      expect(detector.classify(doc, pos(1, 0))).toBe("structural");
+      expect(detector.classify(doc, pos(1, 0))).toBe("unknown");
     });
   });
 });
