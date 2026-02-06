@@ -43,9 +43,16 @@ jobs:
         env:
           VSCE_SKIP_DEPENDENCY_CHECK: "true"
 
-      - name: Publish to Marketplace
+      - name: Publish to VS Code Marketplace
         run: |
           VERSION="${GITHUB_REF#refs/tags/v}"
           npx vsce publish --packagePath "dumbify-${VERSION}.vsix"
         env:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}
+
+      - name: Publish to Open VSX (Cursor marketplace)
+        run: |
+          VERSION="${GITHUB_REF#refs/tags/v}"
+          npx ovsx publish "dumbify-${VERSION}.vsix" --pat "$OVSX_PAT"
+        env:
+          OVSX_PAT: ${{ secrets.OVSX_PAT }}
