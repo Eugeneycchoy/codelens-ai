@@ -1,8 +1,28 @@
+# Node modules
 node_modules/
-dist/*
-!dist/extension.js
-!dist/extension.js.map
+
+# Build outputs
+backend/dist/
+backend/node_modules/
+extension/dist/*
+!extension/dist/extension.js
+!extension/dist/extension.js.map
+extension/node_modules/
+shared/node_modules/
+
+# Package files
 *.vsix
+
+# Azure Functions
+backend/local.settings.json
+
+# Environment files
+.env.local
+.env
+
+# OS files
 .DS_Store
 Thumbs.db
+
+# Logs
 *.log
