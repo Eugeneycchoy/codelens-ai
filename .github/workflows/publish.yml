@@ -12,6 +12,16 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Validate Azure secrets
+        run: |
+          missing=""
+          [ -z "${{ secrets.AZURE_FUNCTIONAPP_NAME }}" ] && missing="AZURE_FUNCTIONAPP_NAME"
+          [ -z "${{ secrets.AZURE_FUNCTIONAPP_PUBLISH_PROFILE }}" ] && missing="${missing:+$missing }AZURE_FUNCTIONAPP_PUBLISH_PROFILE"
+          if [ -n "$missing" ]; then
+            echo "::error::Required GitHub secrets not set (or empty): $missing. Add them under Settings → Secrets and variables → Actions."
+            exit 1
+          fi
+
       - name: Setup Node.js LTS
         uses: actions/setup-node@v4
         with:
