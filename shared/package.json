@@ -1,0 +1,7 @@
+{
+  "name": "@dumbify/shared",
+  "version": "1.0.0",
+  "description": "Shared TypeScript types for Dumbify monorepo",
+  "main": "types.ts",
+  "types": "types.ts"
+}
