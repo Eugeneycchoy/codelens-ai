@@ -6,7 +6,7 @@ on:
       - "v*"
 
 jobs:
-  publish:
+  build-and-deploy-backend:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -16,35 +16,85 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "lts/*"
-          cache: "npm"
 
-      - name: Install dependencies
-        run: npm ci
+      - name: Install backend dependencies
+        run: |
+          cd backend
+          npm install
+
+      - name: Build backend
+        run: |
+          cd backend
+          npm run build
+
+      - name: Deploy to Azure Functions
+        uses: Azure/functions-action@v1
+        with:
+          app-name: ${{ secrets.AZURE_FUNCTIONAPP_NAME }}
+          package: './backend'
+          publish-profile: ${{ secrets.AZURE_FUNCTIONAPP_PUBLISH_PROFILE }}
+
+  build-and-publish-extension:
+    runs-on: ubuntu-latest
+    needs: build-and-deploy-backend
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js LTS
+        uses: actions/setup-node@v4
+        with:
+          node-version: "lts/*"
+
+      - name: Install shared dependencies
+        run: |
+          cd shared
+          npm install || true
+
+      - name: Install extension dependencies
+        run: |
+          cd extension
+          npm install
 
       - name: Version validation
-        run: bash scripts/validate-version.sh
+        run: |
+          cd extension
+          bash ../scripts/validate-version.sh
 
-      - name: Build
-        run: npm run build
+      - name: Build extension
+        env:
+          BACKEND_URL: ${{ secrets.BACKEND_URL }}
+          SHARED_API_KEY: ${{ secrets.SHARED_API_KEY }}
+        run: |
+          cd extension
+          npm run build
 
       - name: Check package assets
         run: |
+          cd extension
           missing=""
-          [ ! -f LICENSE ] && missing="$missing LICENSE"
+          [ ! -f LICENSE ] && [ ! -f ../LICENSE ] && missing="$missing LICENSE"
           [ ! -f icon.png ] && missing="$missing icon.png"
           if [ -n "$missing" ]; then
             echo "::error::Required files not found:$missing"
-            echo "Create your tag from a commit that includes these files (e.g. current master)."
             exit 1
           fi
 
+      - name: Copy LICENSE if needed
+        run: |
+          cd extension
+          [ ! -f LICENSE ] && [ -f ../LICENSE ] && cp ../LICENSE ./ || true
+
       - name: Package
-        run: npx vsce package
+        run: |
+          cd extension
+          npx vsce package
         env:
           VSCE_SKIP_DEPENDENCY_CHECK: "true"
 
       - name: Publish to VS Code Marketplace
         run: |
+          cd extension
           VERSION="${GITHUB_REF#refs/tags/v}"
           npx vsce publish --packagePath "dumbify-${VERSION}.vsix"
         env:
@@ -52,6 +102,7 @@ jobs:
 
       - name: Publish to Open VSX (Cursor marketplace)
         run: |
+          cd extension
           VERSION="${GITHUB_REF#refs/tags/v}"
           npx ovsx publish "dumbify-${VERSION}.vsix" --pat "$OVSX_PAT"
         env:
