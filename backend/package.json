@@ -1,0 +1,27 @@
+{
+  "name": "dumbify-backend",
+  "version": "1.0.0",
+  "description": "Dumbify backend service for Azure Functions",
+  "scripts": {
+    "build": "tsc",
+    "watch": "tsc --watch",
+    "prestart": "npm run build",
+    "start": "func start",
+    "test": "echo \"No tests yet\""
+  },
+  "dependencies": {
+    "@azure/functions": "^4.0.0",
+    "@dumbify/shared": "file:../shared",
+    "dotenv": "^17.2.4",
+    "ioredis": "^5.3.0",
+    "jsonwebtoken": "^9.0.0",
+    "openai": "^4.0.0"
+  },
+  "devDependencies": {
+    "@types/jsonwebtoken": "^9.0.10",
+    "@types/node": "^20.0.0",
+    "azure-functions-core-tools": "^4.0.0",
+    "typescript": "^5.0.0"
+  },
+  "main": "dist/index.js"
+}
